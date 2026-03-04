@@ -13,26 +13,82 @@ import Chatbot from '@/components/chatbot'
 import EightDManager from '@/components/eightd-manager'
 
 
-// Mock data generator for demonstration
-const generateMockIshikawa = (problem: string) => {
-  const categoryTemplates = {
-    People: ['Lack of training', 'Poor communication', 'Insufficient staffing', 'High turnover'],
-    Process: ['Inefficient workflow', 'Missing steps', 'Poor documentation', 'No review process'],
-    Materials: ['Low quality supplies', 'Inadequate inventory', 'Poor vendor relations', 'Contamination risk'],
-    Equipment: ['Outdated machinery', 'Poor maintenance', 'Inadequate tools', 'Technical issues'],
-    Environment: ['Poor lighting', 'Noise pollution', 'Temperature control', 'Safety hazards'],
-    Methods: ['Outdated procedures', 'No standardization', 'Lack of best practices', 'Resistance to change']
-  }
+// Random cause pools per classic Ishikawa category
+const CAUSE_POOLS: Record<string, string[]> = {
+  Man: [
+    'Operator skipped inspection step',
+    'Lack of training on updated procedure',
+    'Fatigue due to extended shift',
+    'Insufficient staffing during peak hours',
+    'High employee turnover in department',
+    'Poor communication between shifts',
+    'Operator used wrong tool revision',
+    'New hire not fully certified',
+    'Distraction during critical operation',
+  ],
+  Method: [
+    'Work instruction not updated after process change',
+    'No standardized procedure for this step',
+    'Incorrect torque sequence followed',
+    'Best practice not documented or shared',
+    'Rework process introduces additional defects',
+    'Setup verification step missing from SOP',
+    'Outdated control plan in use',
+    'Process FMEA not reviewed after design change',
+  ],
+  Machine: [
+    'Worn tooling not replaced on schedule',
+    'Fixture misalignment due to vibration',
+    'Calibration drift in measurement device',
+    'Preventive maintenance overdue',
+    'Machine parameter not within control limit',
+    'Sensor failure not detected early',
+    'Equipment not suitable for material hardness',
+    'Coolant system malfunction',
+  ],
+  Material: [
+    'Supplier part out of tolerance',
+    'Raw material hardness variance',
+    'Incorrect batch of adhesive used',
+    'Material stored in wrong environment',
+    'Certificate of conformance not verified',
+    'Contamination from previous batch',
+    'Incorrect surface finish on incoming part',
+    'Shelf life of material exceeded',
+  ],
+  Measurement: [
+    'Gauge R&R not performed for this feature',
+    'Measurement uncertainty too high',
+    'Wrong reference standard used',
+    'Inspector used incorrect measurement method',
+    'Measurement system not validated',
+    'Ambient temperature affected gauge reading',
+    'Sample size insufficient to detect defect',
+    'Measurement recorded at wrong interval',
+  ],
+  Environment: [
+    'Temperature variation exceeded process window',
+    'Humidity affected adhesive cure time',
+    'Poor lighting in inspection area',
+    'Vibration from adjacent equipment',
+    'Contaminated air supply to pneumatic tool',
+    'ESD controls not followed in sensitive area',
+    'Noise distraction during assembly task',
+    'Cleanroom protocol not observed',
+  ],
+}
 
-  const categories = Object.entries(categoryTemplates).map(([name, causes]) => ({
+const pickUnique = (arr: string[], count: number): string[] => {
+  const shuffled = [...arr].sort(() => Math.random() - 0.5)
+  return shuffled.slice(0, count)
+}
+
+const generateMockIshikawa = (_problem: string) => {
+  const categories = Object.entries(CAUSE_POOLS).map(([name, pool]) => ({
     name,
-    causes: causes.slice(0, 3).map(cause => `${cause} - related to ${problem.toLowerCase()}`)
+    causes: pickUnique(pool, 3),
   }))
-
-  return {
-    mainProblem: problem,
-    categories
-  }
+  return { mainProblem: _problem, categories }
 }
 
 const generateMockFiveWhy = (problem: string) => {
@@ -127,6 +183,11 @@ export default function Home() {
     setLoading(false)
   }
 
+  const handleIshikawaRegenerate = (_lockedCells: boolean[][]) => {
+    // Generate fresh data; the IshikawaDiagram component will preserve locked cells
+    setIshikawaData(generateMockIshikawa(problem))
+  }
+
   const examples = [
     'Customer complaints about product quality',
     'High employee turnover rate',
@@ -215,7 +276,7 @@ export default function Home() {
 
           {/* Ishikawa Tab */}
           <TabsContent value="ishikawa">
-            {ishikawaData && <IshikawaDiagram data={ishikawaData} />}
+            {ishikawaData && <IshikawaDiagram data={ishikawaData} onRegenerate={handleIshikawaRegenerate} />}
           </TabsContent>
 
           {/* 5 Why Tab */}

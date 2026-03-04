@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { Lock, Unlock, RefreshCw } from 'lucide-react'
 
 interface FiveWhyData {
   problem: string
@@ -20,54 +21,65 @@ const rootCauseTypes = [
   { label: 'Technical Root Cause', value: 'TRC', color: '#1976d2' }
 ]
 
+const POTENTIAL_CAUSES = [
+  'Burr on pin surface', 'Worn tooling not replaced', 'Incorrect material hardness',
+  'Operator skipped inspection step', 'Maintenance schedule not followed',
+  'Calibration drift in measurement device', 'Temperature variation in process',
+  'Supplier part out of tolerance', 'Fixture misalignment', 'Inadequate lubrication',
+]
+const PREVENT_OCCURRENCE = [
+  'Defective part produced due to worn die', 'Process parameter exceeded control limit',
+  'Incorrect setup performed by operator', 'Tool wear exceeded threshold',
+  'Raw material did not meet specification', 'Inspection step was skipped',
+  'Poka-yoke bypassed', 'Wrong revision of work instruction used',
+]
+const PROTECT_ESCAPE = [
+  'Visual inspection insufficient to detect defect', 'Gauge R&R not performed',
+  'Sampling plan missed defect', 'Operator not trained for this failure mode',
+  'Final check omitted due to time pressure', 'Control chart not monitored',
+  'Defect not included in failure catalog', 'No mistake-proofing at this step',
+]
+const PREDICT_SYSTEMIC = [
+  'PFMEA did not include this failure mode', 'Control plan not updated after process change',
+  'Risk assessment not reviewed annually', 'Change management process not followed',
+  'Lessons learned not transferred from similar project', 'No escalation process for repeated deviations',
+  'KPI did not capture this failure category', '',
+]
+const TYPES = ['TRC', 'MRC']
+
+const pick = <T,>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)]
+
+const generateRandomRow = () => ({
+  potentialCause: pick(POTENTIAL_CAUSES),
+  preventOccurrence: pick(PREVENT_OCCURRENCE),
+  protectEscape: pick(PROTECT_ESCAPE),
+  predictSystemic: pick(PREDICT_SYSTEMIC),
+  preventType: pick(TYPES),
+  escapeType: pick(TYPES),
+  systemicType: pick(TYPES),
+})
+
+const generateRandomRows = (count = 4) => Array.from({ length: count }, generateRandomRow)
+
 export function FiveWhyAnalysis() {
-  // Hardcoded sample data for demonstration
-  const data: FiveWhyData = {
-    problem: 'Pin not fitting in assembly',
-    rows: [
-      {
-        potentialCause: 'burr on pin',
-        preventOccurrence: 'burr on pin',
-        protectEscape: 'bad parts delivered',
-        predictSystemic: 'parts not according spec.',
-        preventType: 'TRC',
-        escapeType: 'TRC',
-        systemicType: 'TRC',
-      },
-      {
-        potentialCause: 'the station was in use for too long',
-        preventOccurrence: 'the station was in use for too long',
-        protectEscape: 'dewiation was not detected by operators',
-        predictSystemic: 'wear of bending station not avaluated in PFMEA',
-        preventType: 'TRC',
-        escapeType: 'TRC',
-        systemicType: 'TRC',
-      },
-      {
-        potentialCause: 'no preventive maintenance performed beofre worn out',
-        preventOccurrence: 'no preventive maintenance performed beofre worn out',
-        protectEscape: 'No special information for operaotrs available concering visual inspection of cutting area on pin',
-        predictSystemic: '',
-        preventType: 'TRC',
-        escapeType: 'TRC',
-        systemicType: '',
-      },
-      {
-        potentialCause: 'Maintenance insufficent',
-        preventOccurrence: 'Maintenance insufficent',
-        protectEscape: 'failure picture was not included into failure picture catalog',
-        predictSystemic: '',
-        preventType: 'TRC',
-        escapeType: 'TRC',
-        systemicType: '',
-      },
-    ]
-  }
-  const [rows, setRows] = useState(Array.isArray(data.rows) ? data.rows : [])
+  const problem = 'Pin not fitting in assembly'
+  const [rows, setRows] = useState(() => generateRandomRows(4))
   const [locked, setLocked] = useState(false)
+  // Per-row lock: locked rows are preserved during regeneration
+  const [lockedRows, setLockedRows] = useState<boolean[]>(() => Array(4).fill(false))
+
+  const toggleRowLock = (rowIdx: number) => {
+    setLockedRows(prev => prev.map((v, i) => i === rowIdx ? !v : v))
+  }
+
+  const handleRegenerate = () => {
+    // Replace only unlocked rows with fresh random data; keep locked rows
+    setRows(prev => prev.map((row, idx) => lockedRows[idx] ? row : generateRandomRow()))
+    setLocked(false)
+  }
 
   const handleExport = () => {
-    const exportData = { problem: data.problem, rows };
+    const exportData = { problem, rows };
     const json = JSON.stringify(exportData, null, 2);
     const blob = new Blob([json], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -98,7 +110,7 @@ export function FiveWhyAnalysis() {
     <div className="overflow-x-auto mt-6">
       <div className="mb-4 p-3 bg-muted/30 rounded border border-border">
         <span className="text-sm text-muted-foreground mr-2 font-semibold">Problem:</span>
-        <span className="font-semibold text-foreground">{data.problem}</span>
+        <span className="font-semibold text-foreground">{problem}</span>
       </div>
       <div className="flex items-center gap-6 mb-2">
         <div className="flex items-center gap-2">
@@ -129,42 +141,56 @@ export function FiveWhyAnalysis() {
         </thead>
         <tbody>
           {(rows || []).map((row, rowIdx) => (
-            <tr key={rowIdx}>
+            <tr key={rowIdx} style={{ backgroundColor: lockedRows[rowIdx] ? '#e8f4fd' : undefined }}>
               {/* Potential Cause (Why?) */}
-              <td className="border border-border align-top text-center bg-white" style={{ minWidth: 120 }}>
+              <td className="border border-border align-top text-center" style={{ minWidth: 120, backgroundColor: lockedRows[rowIdx] ? '#d6eaf8' : 'white' }}>
                 <div className="flex flex-col items-center justify-center h-full">
-                  <div className="mb-1">
+                  <div className="mb-1 flex items-center gap-1">
                     <span className="inline-block text-[1.2rem] font-bold text-orange-500">Why?</span>
+                    <button
+                      className="p-0.5 rounded hover:bg-gray-100 transition"
+                      onClick={() => toggleRowLock(rowIdx)}
+                      title={lockedRows[rowIdx] ? 'Unlock this row' : 'Lock this row'}
+                      aria-label={lockedRows[rowIdx] ? 'Unlock row' : 'Lock row'}
+                      type="button"
+                    >
+                      {lockedRows[rowIdx]
+                        ? <Lock className="w-3.5 h-3.5 text-blue-600" />
+                        : <Unlock className="w-3.5 h-3.5 text-gray-400" />
+                      }
+                    </button>
                   </div>
                   <textarea
-                    className="w-full min-w-[100px] min-h-[40px] border border-border rounded p-1 text-xs bg-white text-foreground resize-y"
+                    className="w-full min-w-[100px] min-h-[40px] border border-border rounded p-1 text-xs text-foreground resize-y"
+                    style={{ backgroundColor: lockedRows[rowIdx] ? '#d6eaf8' : 'white' }}
                     value={row.potentialCause}
                     onChange={e => handleChange(rowIdx, 'potentialCause', e.target.value)}
                     aria-label="Potential Cause"
                     rows={1}
-                    disabled={locked}
+                    disabled={locked || lockedRows[rowIdx]}
                   />
                 </div>
               </td>
               {/* Prevent Occurrence */}
-              <td className="border border-border align-top bg-white">
+              <td className="border border-border align-top" style={{ backgroundColor: lockedRows[rowIdx] ? '#e8f4fd' : 'white' }}>
                 <textarea
-                  className="w-full min-h-[40px] border border-border rounded p-1 text-xs bg-white text-foreground resize-y"
+                  className="w-full min-h-[40px] border border-border rounded p-1 text-xs text-foreground resize-y"
+                  style={{ backgroundColor: lockedRows[rowIdx] ? '#e8f4fd' : 'white' }}
                   value={row.preventOccurrence}
                   onChange={e => handleChange(rowIdx, 'preventOccurrence', e.target.value)}
                   aria-label="Prevent Occurrence"
                   rows={1}
-                  disabled={locked}
+                  disabled={locked || lockedRows[rowIdx]}
                 />
               </td>
-              <td className="border border-border align-top bg-white w-20 overflow-visible relative z-10">
+              <td className="border border-border align-top w-20 overflow-visible relative z-10" style={{ backgroundColor: lockedRows[rowIdx] ? '#e8f4fd' : 'white' }}>
                 <select
-                  className="w-full text-xs rounded border border-border bg-white"
+                  className="w-full text-xs rounded border border-border"
                   aria-label="Prevent Occurrence Type"
                   value={row.preventType}
                   onChange={e => handleChange(rowIdx, 'preventType', e.target.value)}
-                  style={{ position: 'relative', zIndex: 10 }}
-                  disabled={locked}
+                  style={{ position: 'relative', zIndex: 10, backgroundColor: lockedRows[rowIdx] ? '#e8f4fd' : 'white' }}
+                  disabled={locked || lockedRows[rowIdx]}
                 >
                   <option value="">Type</option>
                   {rootCauseTypes.map(opt => (
@@ -173,24 +199,25 @@ export function FiveWhyAnalysis() {
                 </select>
               </td>
               {/* Protect Escape */}
-              <td className="border border-border align-top bg-white">
+              <td className="border border-border align-top" style={{ backgroundColor: lockedRows[rowIdx] ? '#e8f4fd' : 'white' }}>
                 <textarea
-                  className="w-full min-h-[40px] border border-border rounded p-1 text-xs bg-white text-foreground resize-y"
+                  className="w-full min-h-[40px] border border-border rounded p-1 text-xs text-foreground resize-y"
+                  style={{ backgroundColor: lockedRows[rowIdx] ? '#e8f4fd' : 'white' }}
                   value={row.protectEscape}
                   onChange={e => handleChange(rowIdx, 'protectEscape', e.target.value)}
                   aria-label="Protect Escape"
                   rows={1}
-                  disabled={locked}
+                  disabled={locked || lockedRows[rowIdx]}
                 />
               </td>
-              <td className="border border-border align-top bg-white w-20 overflow-visible relative z-10">
+              <td className="border border-border align-top w-20 overflow-visible relative z-10" style={{ backgroundColor: lockedRows[rowIdx] ? '#e8f4fd' : 'white' }}>
                 <select
-                  className="w-full text-xs rounded border border-border bg-white"
+                  className="w-full text-xs rounded border border-border"
                   aria-label="Protect Escape Type"
                   value={row.escapeType}
                   onChange={e => handleChange(rowIdx, 'escapeType', e.target.value)}
-                  style={{ position: 'relative', zIndex: 10 }}
-                  disabled={locked}
+                  style={{ position: 'relative', zIndex: 10, backgroundColor: lockedRows[rowIdx] ? '#e8f4fd' : 'white' }}
+                  disabled={locked || lockedRows[rowIdx]}
                 >
                   <option value="">Type</option>
                   {rootCauseTypes.map(opt => (
@@ -199,24 +226,25 @@ export function FiveWhyAnalysis() {
                 </select>
               </td>
               {/* Predict Systemic */}
-              <td className="border border-border align-top bg-white">
+              <td className="border border-border align-top" style={{ backgroundColor: lockedRows[rowIdx] ? '#e8f4fd' : 'white' }}>
                 <textarea
-                  className="w-full min-h-[40px] border border-border rounded p-1 text-xs bg-white text-foreground resize-y"
+                  className="w-full min-h-[40px] border border-border rounded p-1 text-xs text-foreground resize-y"
+                  style={{ backgroundColor: lockedRows[rowIdx] ? '#e8f4fd' : 'white' }}
                   value={row.predictSystemic}
                   onChange={e => handleChange(rowIdx, 'predictSystemic', e.target.value)}
                   aria-label="Predict Systemic"
                   rows={1}
-                  disabled={locked}
+                  disabled={locked || lockedRows[rowIdx]}
                 />
               </td>
-              <td className="border border-border align-top bg-white w-20 overflow-visible relative z-10">
+              <td className="border border-border align-top w-20 overflow-visible relative z-10" style={{ backgroundColor: lockedRows[rowIdx] ? '#e8f4fd' : 'white' }}>
                 <select
-                  className="w-full text-xs rounded border border-border bg-white"
+                  className="w-full text-xs rounded border border-border"
                   aria-label="Predict Systemic Type"
                   value={row.systemicType}
                   onChange={e => handleChange(rowIdx, 'systemicType', e.target.value)}
-                  style={{ position: 'relative', zIndex: 10 }}
-                  disabled={locked}
+                  style={{ position: 'relative', zIndex: 10, backgroundColor: lockedRows[rowIdx] ? '#e8f4fd' : 'white' }}
+                  disabled={locked || lockedRows[rowIdx]}
                 >
                   <option value="">Type</option>
                   {rootCauseTypes.map(opt => (
@@ -230,6 +258,14 @@ export function FiveWhyAnalysis() {
       </table>
       {/* Action Buttons */}
       <div className="mt-8 flex flex-wrap gap-4 justify-end">
+        <button
+          className="px-6 py-2 rounded bg-secondary text-foreground font-semibold shadow hover:bg-orange-700 hover:text-white transition flex items-center gap-2"
+          onClick={handleRegenerate}
+          aria-label="Regenerate unlocked rows"
+        >
+          <RefreshCw className="w-4 h-4" />
+          Regenerate
+        </button>
         {!locked && (
           <button
             className="px-6 py-2 rounded bg-primary text-white font-semibold shadow hover:bg-orange-700 transition"
@@ -237,15 +273,6 @@ export function FiveWhyAnalysis() {
             aria-label="Finalize 5 Why Analysis"
           >
             Finalize
-          </button>
-        )}
-        {locked && (
-          <button
-            className="px-6 py-2 rounded bg-secondary text-foreground font-semibold shadow hover:bg-orange-700 transition"
-            onClick={() => setLocked(false)}
-            aria-label="Regenerate 5 Why Analysis"
-          >
-            Regenerate
           </button>
         )}
         <button

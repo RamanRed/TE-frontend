@@ -1,8 +1,9 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect, useRef } from 'react'
 import { Card } from '@/components/ui/card'
 import { FiveWhyAnalysis } from '@/components/five-why-analysis'
+import { Lock, Unlock, RefreshCw } from 'lucide-react'
 
 interface IshikawaData {
   mainProblem: string
@@ -12,7 +13,7 @@ interface IshikawaData {
   }>
 }
 
-export function IshikawaDiagram({ data, onCauseStatusChange, onEdit, onFinalize }: { data: IshikawaData, onCauseStatusChange?: (category: string, causeIdx: number, status: string) => void, onEdit?: (category: string, causeIdx: number, value: string) => void, onFinalize?: (finalData: { causes: string[][], statuses: string[][] }) => void }) {
+export function IshikawaDiagram({ data, onCauseStatusChange, onEdit, onFinalize, onRegenerate }: { data: IshikawaData, onCauseStatusChange?: (category: string, causeIdx: number, status: string) => void, onEdit?: (category: string, causeIdx: number, value: string) => void, onFinalize?: (finalData: { causes: string[][], statuses: string[][] }) => void, onRegenerate?: (lockedCells: boolean[][]) => void }) {
   // Accessibility colors for categories
   const accessibleColors = [
     '#ff8800', '#ffcc80', '#ffe5b4', '#222', '#fff', '#ff4d4d'
@@ -46,6 +47,32 @@ export function IshikawaDiagram({ data, onCauseStatusChange, onEdit, onFinalize 
   })
   // Lock state after finalize
   const [locked, setLocked] = useState(false)
+  // Per-cell lock state (prevents regeneration from overwriting)
+  const [lockedCells, setLockedCells] = useState<boolean[][]>(() =>
+    orderedCategories.map(() => Array(3).fill(false))
+  )
+  // Keep a ref to lockedCells for use inside effects without re-running on lock change
+  const lockedCellsRef = useRef(lockedCells)
+  useEffect(() => { lockedCellsRef.current = lockedCells }, [lockedCells])
+
+  // When data prop changes (e.g. after regeneration), update only unlocked cells
+  useEffect(() => {
+    setEditableCauses(prev =>
+      orderedCategories.map((cat, catIdx) =>
+        Array(3).fill('').map((_, idx) =>
+          lockedCellsRef.current[catIdx]?.[idx] ? prev[catIdx][idx] : (cat.causes[idx] || '')
+        )
+      )
+    )
+  }, [data])
+
+  const toggleCellLock = (catIdx: number, causeIdx: number) => {
+    setLockedCells(prev => {
+      const updated = prev.map(arr => [...arr])
+      updated[catIdx][causeIdx] = !updated[catIdx][causeIdx]
+      return updated
+    })
+  }
 
   const handleStatusChange = (catIdx: number, causeIdx: number, status: string) => {
     setCauseStatuses(prev => {
@@ -123,9 +150,9 @@ export function IshikawaDiagram({ data, onCauseStatusChange, onEdit, onFinalize 
             <button
               className="px-6 py-2 rounded bg-secondary text-foreground font-semibold shadow hover:bg-orange-700 transition"
               onClick={() => setLocked(false)}
-              aria-label="Regenerate Ishikawa Diagram"
+              aria-label="Unlock Ishikawa Diagram for editing"
             >
-              Regenerate
+              Unlock for Editing
             </button>
           </div>
         )}
@@ -142,13 +169,28 @@ export function IshikawaDiagram({ data, onCauseStatusChange, onEdit, onFinalize 
               <tr key={rowIdx} className="border-t border-border">
                 {orderedCategories.slice(0, 3).map((cat, colIdx) => (
                   <td key={colIdx} className="px-4 py-2 align-top" style={{ backgroundColor: '#fff' }}>
-                    <textarea
-                      className="w-full h-16 border border-border rounded p-2 text-xs bg-white text-foreground resize-none"
-                      value={editableCauses[colIdx][rowIdx]}
-                      onChange={e => handleCauseEdit(colIdx, rowIdx, e.target.value)}
-                      aria-label={`Cause for ${cat.name}`}
-                      disabled={locked}
-                    />
+                    <div className="relative">
+                      <textarea
+                        className="w-full h-16 border border-border rounded p-2 pr-7 text-xs text-foreground resize-none"
+                        style={{ backgroundColor: lockedCells[colIdx]?.[rowIdx] ? '#e8f4fd' : 'white' }}
+                        value={editableCauses[colIdx][rowIdx]}
+                        onChange={e => handleCauseEdit(colIdx, rowIdx, e.target.value)}
+                        aria-label={`Cause for ${cat.name}`}
+                        disabled={locked || lockedCells[colIdx]?.[rowIdx]}
+                      />
+                      <button
+                        className="absolute top-1 right-1 p-0.5 rounded hover:bg-gray-100 transition"
+                        onClick={() => toggleCellLock(colIdx, rowIdx)}
+                        title={lockedCells[colIdx]?.[rowIdx] ? 'Unlock this cause' : 'Lock this cause'}
+                        aria-label={lockedCells[colIdx]?.[rowIdx] ? 'Unlock' : 'Lock'}
+                        type="button"
+                      >
+                        {lockedCells[colIdx]?.[rowIdx]
+                          ? <Lock className="w-3 h-3 text-blue-600" />
+                          : <Unlock className="w-3 h-3 text-gray-400" />
+                        }
+                      </button>
+                    </div>
                     <select
                       className="mt-1 w-full text-xs rounded border border-border"
                       aria-label={`Status for ${cat.name} cause ${rowIdx + 1}`}
@@ -191,13 +233,28 @@ export function IshikawaDiagram({ data, onCauseStatusChange, onEdit, onFinalize 
               <tr key={rowIdx} className="border-t border-border">
                 {orderedCategories.slice(3).map((cat, colIdx) => (
                   <td key={colIdx} className="px-4 py-2 align-top" style={{ backgroundColor: '#fff' }}>
-                    <textarea
-                      className="w-full h-16 border border-border rounded p-2 text-xs bg-white text-foreground resize-none"
-                      value={editableCauses[colIdx + 3][rowIdx]}
-                      onChange={e => handleCauseEdit(colIdx + 3, rowIdx, e.target.value)}
-                      aria-label={`Cause for ${cat.name}`}
-                      disabled={locked}
-                    />
+                    <div className="relative">
+                      <textarea
+                        className="w-full h-16 border border-border rounded p-2 pr-7 text-xs text-foreground resize-none"
+                        style={{ backgroundColor: lockedCells[colIdx + 3]?.[rowIdx] ? '#e8f4fd' : 'white' }}
+                        value={editableCauses[colIdx + 3][rowIdx]}
+                        onChange={e => handleCauseEdit(colIdx + 3, rowIdx, e.target.value)}
+                        aria-label={`Cause for ${cat.name}`}
+                        disabled={locked || lockedCells[colIdx + 3]?.[rowIdx]}
+                      />
+                      <button
+                        className="absolute top-1 right-1 p-0.5 rounded hover:bg-gray-100 transition"
+                        onClick={() => toggleCellLock(colIdx + 3, rowIdx)}
+                        title={lockedCells[colIdx + 3]?.[rowIdx] ? 'Unlock this cause' : 'Lock this cause'}
+                        aria-label={lockedCells[colIdx + 3]?.[rowIdx] ? 'Unlock' : 'Lock'}
+                        type="button"
+                      >
+                        {lockedCells[colIdx + 3]?.[rowIdx]
+                          ? <Lock className="w-3 h-3 text-blue-600" />
+                          : <Unlock className="w-3 h-3 text-gray-400" />
+                        }
+                      </button>
+                    </div>
                     <select
                       className="mt-1 w-full text-xs rounded border border-border"
                       aria-label={`Status for ${cat.name} cause ${rowIdx + 1}`}
@@ -230,6 +287,17 @@ export function IshikawaDiagram({ data, onCauseStatusChange, onEdit, onFinalize 
           </div>
         </div>
         <div className="mt-8 flex justify-end gap-4">
+          {onRegenerate && (
+            <button
+              className="px-6 py-2 rounded bg-secondary text-foreground font-semibold shadow hover:bg-orange-700 hover:text-white transition flex items-center gap-2"
+              onClick={() => onRegenerate(lockedCells)}
+              aria-label="Regenerate unlocked causes"
+              type="button"
+            >
+              <RefreshCw className="w-4 h-4" />
+              Regenerate
+            </button>
+          )}
           {!locked && (
             <button
               className="px-6 py-2 rounded bg-primary text-white font-semibold shadow hover:bg-orange-700 transition"
