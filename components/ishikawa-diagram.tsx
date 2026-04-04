@@ -1,329 +1,389 @@
 'use client'
 
-import { useMemo, useState, useEffect, useRef } from 'react'
-import { Card } from '@/components/ui/card'
-import { FiveWhyAnalysis } from '@/components/five-why-analysis'
-import { Lock, Unlock, RefreshCw } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Lock, RefreshCw, Unlock } from 'lucide-react'
 
-interface IshikawaData {
-  mainProblem: string
-  categories: Array<{
-    name: string
-    causes: string[]
-  }>
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
+import {
+  type CauseStatus,
+  type IshikawaCategory,
+  type IshikawaResultItem,
+  CANONICAL_BONES,
+  createEmptyIshikawaItem,
+  isMeaningfulIshikawaItem,
+  normalizeIshikawaCategories,
+} from '@/lib/root-cause'
+
+type EditableIshikawaItem = IshikawaResultItem & {
+  status: CauseStatus
 }
 
-export function IshikawaDiagram({ data, onCauseStatusChange, onEdit, onFinalize, onRegenerate }: { data: IshikawaData, onCauseStatusChange?: (category: string, causeIdx: number, status: string) => void, onEdit?: (category: string, causeIdx: number, value: string) => void, onFinalize?: (finalData: { causes: string[][], statuses: string[][] }) => void, onRegenerate?: (lockedCells: boolean[][]) => void }) {
-  // Accessibility colors for categories
-  const accessibleColors = [
-    '#ff8800', '#ffcc80', '#ffe5b4', '#222', '#fff', '#ff4d4d'
-  ]
-  // Table column order for classic Ishikawa categories
-  const classicOrder = [
-    'Man', 'Method', 'Machine', 'Material', 'Measurement', 'Environment'
-  ]
-  // Map categories to classic order
-  const orderedCategories = classicOrder.map(cat =>
-    data.categories.find(c => c.name.toLowerCase() === cat.toLowerCase()) || {
-      name: cat,
-      causes: []
-    }
-  )
-  // Helper for cause status (for dropdown)
-  const causeStatusOptions = [
-    { label: 'Confirmed as Cause', color: '#ff4d4d', bg: '#fff', value: 'confirmed' },
-    { label: 'Possible Cause', color: '#ff8800', bg: '#fff', value: 'possible' },
-    { label: 'Excluded as Cause', color: '#008000', bg: '#fff', value: 'excluded' },
-    { label: 'N/A', color: '#222', bg: '#fff', value: 'na' }
-  ]
+const STATUS_OPTIONS: Array<{
+  label: string
+  value: CauseStatus
+  className: string
+}> = [
+  { label: 'Confirmed as Cause', value: 'confirmed', className: 'text-red-600' },
+  { label: 'Possible Cause', value: 'possible', className: 'text-orange-600' },
+  { label: 'Excluded as Cause', value: 'excluded', className: 'text-green-600' },
+  { label: 'N/A', value: 'na', className: 'text-slate-700' },
+]
 
-  // State for cause statuses
-  const [causeStatuses, setCauseStatuses] = useState(() => {
-    return orderedCategories.map(cat => Array(3).fill('excluded'))
-  })
-  // State for editable causes
-  const [editableCauses, setEditableCauses] = useState(() => {
-    return orderedCategories.map(cat => Array(3).fill('').map((_, idx) => cat.causes[idx] || ''))
-  })
-  // Lock state after finalize
+const TABLE_GROUPS = [CANONICAL_BONES.slice(0, 3), CANONICAL_BONES.slice(3)]
+
+function createEditableItem(item?: IshikawaResultItem): EditableIshikawaItem {
+  return {
+    ...(item ?? createEmptyIshikawaItem()),
+    status: 'possible',
+  }
+}
+
+function cloneEditableItem(item: EditableIshikawaItem) {
+  return {
+    ...item,
+  }
+}
+
+function buildMatrix(categories: IshikawaCategory[], rowCount: number) {
+  return categories.map((category) =>
+    Array.from({ length: rowCount }, (_, rowIndex) =>
+      createEditableItem(category.result[rowIndex]),
+    ),
+  )
+}
+
+function buildLockedMatrix(previous: boolean[][], categoryCount: number, rowCount: number) {
+  return Array.from({ length: categoryCount }, (_, categoryIndex) =>
+    Array.from({ length: rowCount }, (_, rowIndex) => previous[categoryIndex]?.[rowIndex] ?? false),
+  )
+}
+
+function getEvidenceTone(severity: string) {
+  const normalized = severity.trim().toLowerCase()
+
+  if (normalized.includes('high') || normalized.includes('critical')) {
+    return 'destructive' as const
+  }
+  if (normalized.includes('medium')) {
+    return 'secondary' as const
+  }
+
+  return 'outline' as const
+}
+
+export function IshikawaDiagram({
+  problem,
+  data,
+  busy = false,
+  onFinalize,
+  onRegenerate,
+}: {
+  problem: string
+  data: IshikawaCategory[]
+  busy?: boolean
+  onFinalize?: (finalData: IshikawaCategory[]) => void | Promise<void>
+  onRegenerate?: (lockedData: IshikawaCategory[]) => void | Promise<void>
+}) {
+  const orderedCategories = useMemo(() => normalizeIshikawaCategories(data), [data])
+  const rowCount = useMemo(
+    () => Math.max(3, ...orderedCategories.map((category) => category.result.length)),
+    [orderedCategories],
+  )
+
   const [locked, setLocked] = useState(false)
-  // Per-cell lock state (prevents regeneration from overwriting)
-  const [lockedCells, setLockedCells] = useState<boolean[][]>(() =>
-    orderedCategories.map(() => Array(3).fill(false))
+  const [editableCells, setEditableCells] = useState<EditableIshikawaItem[][]>(() =>
+    buildMatrix(orderedCategories, rowCount),
   )
-  // Keep a ref to lockedCells for use inside effects without re-running on lock change
+  const [lockedCells, setLockedCells] = useState<boolean[][]>(() =>
+    buildLockedMatrix([], orderedCategories.length, rowCount),
+  )
+
   const lockedCellsRef = useRef(lockedCells)
-  useEffect(() => { lockedCellsRef.current = lockedCells }, [lockedCells])
-
-  // When data prop changes (e.g. after regeneration), update only unlocked cells
   useEffect(() => {
-    setEditableCauses(prev =>
-      orderedCategories.map((cat, catIdx) =>
-        Array(3).fill('').map((_, idx) =>
-          lockedCellsRef.current[catIdx]?.[idx] ? prev[catIdx][idx] : (cat.causes[idx] || '')
-        )
-      )
+    lockedCellsRef.current = lockedCells
+  }, [lockedCells])
+
+  useEffect(() => {
+    setEditableCells((previous) =>
+      orderedCategories.map((category, categoryIndex) =>
+        Array.from({ length: rowCount }, (_, rowIndex) => {
+          if (lockedCellsRef.current[categoryIndex]?.[rowIndex]) {
+            return previous[categoryIndex]?.[rowIndex] ?? createEditableItem()
+          }
+
+          const nextItem = category.result[rowIndex]
+          const previousStatus = previous[categoryIndex]?.[rowIndex]?.status ?? 'possible'
+
+          return {
+            ...createEditableItem(nextItem),
+            status: previousStatus,
+          }
+        }),
+      ),
     )
-  }, [data])
+    setLockedCells((previous) => buildLockedMatrix(previous, orderedCategories.length, rowCount))
+  }, [orderedCategories, rowCount])
 
-  const toggleCellLock = (catIdx: number, causeIdx: number) => {
-    setLockedCells(prev => {
-      const updated = prev.map(arr => [...arr])
-      updated[catIdx][causeIdx] = !updated[catIdx][causeIdx]
-      return updated
-    })
+  const serializeCells = (onlyLocked: boolean) =>
+    orderedCategories.map((category, categoryIndex) => ({
+      id: category.id,
+      category: category.category,
+      result: editableCells[categoryIndex]
+        ?.filter((item, rowIndex) => (!onlyLocked || lockedCells[categoryIndex]?.[rowIndex]) && isMeaningfulIshikawaItem(item))
+        .map(({ status: _status, ...item }) => item) ?? [],
+    }))
+
+  const handleCellChange = (
+    categoryIndex: number,
+    rowIndex: number,
+    field: keyof IshikawaResultItem | 'status',
+    value: string,
+  ) => {
+    setEditableCells((previous) =>
+      previous.map((categoryItems, currentCategoryIndex) =>
+        currentCategoryIndex === categoryIndex
+          ? categoryItems.map((item, currentRowIndex) =>
+              currentRowIndex === rowIndex
+                ? {
+                    ...item,
+                    [field]: value,
+                  }
+                : item,
+            )
+          : categoryItems.map((item) => cloneEditableItem(item)),
+      ),
+    )
   }
 
-  const handleStatusChange = (catIdx: number, causeIdx: number, status: string) => {
-    setCauseStatuses(prev => {
-      const updated = prev.map(arr => [...arr])
-      updated[catIdx][causeIdx] = status
-      return updated
-    })
-    if (onCauseStatusChange) {
-      onCauseStatusChange(orderedCategories[catIdx].name, causeIdx, status)
-    }
+  const toggleCellLock = (categoryIndex: number, rowIndex: number) => {
+    setLockedCells((previous) =>
+      previous.map((rowLocks, currentCategoryIndex) =>
+        currentCategoryIndex === categoryIndex
+          ? rowLocks.map((isLocked, currentRowIndex) =>
+              currentRowIndex === rowIndex ? !isLocked : isLocked,
+            )
+          : [...rowLocks],
+      ),
+    )
   }
 
-  const handleCauseEdit = (catIdx: number, causeIdx: number, value: string) => {
-    setEditableCauses(prev => {
-      const updated = prev.map(arr => [...arr])
-      updated[catIdx][causeIdx] = value
-      return updated
-    })
-    if (onEdit) {
-      onEdit(orderedCategories[catIdx].name, causeIdx, value)
-    }
-  }
-
-  const handleFinalize = () => {
-    if (onFinalize) {
-      onFinalize({ causes: editableCauses, statuses: causeStatuses })
-    }
+  const handleFinalize = async () => {
+    const finalData = serializeCells(false)
     setLocked(true)
-    alert('Ishikawa diagram finalized!')
+    await onFinalize?.(finalData)
   }
 
   const handleExport = () => {
-    // Prepare export data
     const exportData = {
-      mainProblem: data.mainProblem,
-      categories: orderedCategories.map((cat, catIdx) => ({
-        name: cat.name,
-        causes: editableCauses[catIdx],
-        statuses: causeStatuses[catIdx]
-      }))
+      problem,
+      ishikawa: serializeCells(false),
     }
-    // Convert to JSON string
-    const json = JSON.stringify(exportData, null, 2)
-    // Create blob and download
-    const blob = new Blob([json], { type: 'application/json' })
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], {
+      type: 'application/json',
+    })
     const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'ishikawa-diagram.json'
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = 'ishikawa-diagram.json'
+    document.body.appendChild(anchor)
+    anchor.click()
+    document.body.removeChild(anchor)
     URL.revokeObjectURL(url)
   }
 
-  // Collect confirmed causes for 5 Why Analysis
-  const confirmedCauses: Array<{ category: string; cause: string }> = []
-  orderedCategories.forEach((cat, catIdx) => {
-    causeStatuses[catIdx].forEach((status, causeIdx) => {
-      if (status === 'confirmed' && editableCauses[catIdx][causeIdx]) {
-        confirmedCauses.push({
-          category: cat.name,
-          cause: editableCauses[catIdx][causeIdx]
-        })
-      }
-    })
-  })
+  const renderCell = (categoryName: string, categoryIndex: number, rowIndex: number) => {
+    const item = editableCells[categoryIndex]?.[rowIndex] ?? createEditableItem()
+    const isCellLocked = lockedCells[categoryIndex]?.[rowIndex]
+
+    return (
+      <td
+        key={`${categoryName}-${rowIndex}`}
+        className="border-t border-border bg-white px-3 py-3 align-top"
+      >
+        <div className="space-y-2">
+          <div className="flex items-start gap-2">
+            <Input
+              value={item.sub_category}
+              onChange={(event) =>
+                handleCellChange(categoryIndex, rowIndex, 'sub_category', event.target.value)
+              }
+              placeholder="Sub-category"
+              aria-label={`${categoryName} sub-category ${rowIndex + 1}`}
+              disabled={locked || isCellLocked || busy}
+              className="h-8 bg-white text-xs"
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="shrink-0"
+              onClick={() => toggleCellLock(categoryIndex, rowIndex)}
+              title={isCellLocked ? 'Unlock this cause' : 'Lock this cause'}
+              aria-label={isCellLocked ? 'Unlock this cause' : 'Lock this cause'}
+              disabled={busy}
+            >
+              {isCellLocked ? (
+                <Lock className="size-4 text-blue-600" />
+              ) : (
+                <Unlock className="size-4 text-slate-400" />
+              )}
+            </Button>
+          </div>
+          <Textarea
+            value={item.cause}
+            onChange={(event) => handleCellChange(categoryIndex, rowIndex, 'cause', event.target.value)}
+            placeholder="Cause description"
+            aria-label={`${categoryName} cause ${rowIndex + 1}`}
+            disabled={locked || isCellLocked || busy}
+            className="min-h-24 resize-y bg-white text-sm"
+          />
+          <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+            <Input
+              value={item.evidence}
+              onChange={(event) =>
+                handleCellChange(categoryIndex, rowIndex, 'evidence', event.target.value)
+              }
+              placeholder="Evidence"
+              aria-label={`${categoryName} evidence ${rowIndex + 1}`}
+              disabled={locked || isCellLocked || busy}
+              className="h-8 bg-white text-xs"
+            />
+            <Input
+              value={item.severity}
+              onChange={(event) =>
+                handleCellChange(categoryIndex, rowIndex, 'severity', event.target.value)
+              }
+              placeholder="Severity"
+              aria-label={`${categoryName} severity ${rowIndex + 1}`}
+              disabled={locked || isCellLocked || busy}
+              className="h-8 bg-white text-xs sm:w-28"
+            />
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <select
+              className="h-8 w-full rounded-md border border-border bg-white px-2 text-xs"
+              aria-label={`${categoryName} status ${rowIndex + 1}`}
+              value={item.status}
+              onChange={(event) =>
+                handleCellChange(categoryIndex, rowIndex, 'status', event.target.value)
+              }
+              disabled={locked || busy}
+            >
+              {STATUS_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value} className={option.className}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            {item.severity.trim() ? (
+              <Badge variant={getEvidenceTone(item.severity)}>{item.severity}</Badge>
+            ) : null}
+          </div>
+        </div>
+      </td>
+    )
+  }
 
   return (
-    <Card className="w-full p-6 bg-card border-border">
-      <h2 className="text-2xl font-bold mb-4 text-foreground" id="ishikawa-title">Ishikawa Diagram</h2>
-      <div className="overflow-x-auto">
-        {locked && (
-          <div className="flex justify-end mb-4">
-            <button
-              className="px-6 py-2 rounded bg-secondary text-foreground font-semibold shadow hover:bg-orange-700 transition"
-              onClick={() => setLocked(false)}
-              aria-label="Unlock Ishikawa Diagram for editing"
-            >
+    <Card className="gap-0 overflow-hidden border-border bg-card">
+      <div className="border-b border-border px-6 py-5">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="space-y-2">
+            <h2 className="text-2xl font-bold text-foreground">Ishikawa Diagram</h2>
+            <p className="max-w-3xl text-sm text-muted-foreground">
+              Review each generated cause, lock any rows you want preserved, then finalize to
+              create the 5-Why analysis.
+            </p>
+          </div>
+          {locked ? (
+            <Button variant="secondary" onClick={() => setLocked(false)} disabled={busy}>
               Unlock for Editing
-            </button>
-          </div>
-        )}
-        <table className="min-w-full border border-border bg-card rounded-lg" aria-labelledby="ishikawa-title">
-          <thead className="bg-muted">
-            <tr>
-              {orderedCategories.slice(0, 3).map((cat, idx) => (
-                <th key={cat.name} scope="col" className="px-4 py-2 text-left text-foreground text-base" style={{ backgroundColor: '#1976d2', color: '#fff' }}>{cat.name}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {[0, 1, 2].map(rowIdx => (
-              <tr key={rowIdx} className="border-t border-border">
-                {orderedCategories.slice(0, 3).map((cat, colIdx) => (
-                  <td key={colIdx} className="px-4 py-2 align-top" style={{ backgroundColor: '#fff' }}>
-                    <div className="relative">
-                      <textarea
-                        className="w-full h-16 border border-border rounded p-2 pr-7 text-xs text-foreground resize-none"
-                        style={{ backgroundColor: lockedCells[colIdx]?.[rowIdx] ? '#e8f4fd' : 'white' }}
-                        value={editableCauses[colIdx][rowIdx]}
-                        onChange={e => handleCauseEdit(colIdx, rowIdx, e.target.value)}
-                        aria-label={`Cause for ${cat.name}`}
-                        disabled={locked || lockedCells[colIdx]?.[rowIdx]}
-                      />
-                      <button
-                        className="absolute top-1 right-1 p-0.5 rounded hover:bg-gray-100 transition"
-                        onClick={() => toggleCellLock(colIdx, rowIdx)}
-                        title={lockedCells[colIdx]?.[rowIdx] ? 'Unlock this cause' : 'Lock this cause'}
-                        aria-label={lockedCells[colIdx]?.[rowIdx] ? 'Unlock' : 'Lock'}
-                        type="button"
-                      >
-                        {lockedCells[colIdx]?.[rowIdx]
-                          ? <Lock className="w-3 h-3 text-blue-600" />
-                          : <Unlock className="w-3 h-3 text-gray-400" />
-                        }
-                      </button>
-                    </div>
-                    <select
-                      className="mt-1 w-full text-xs rounded border border-border"
-                      aria-label={`Status for ${cat.name} cause ${rowIdx + 1}`}
-                      value={causeStatuses[colIdx][rowIdx]}
-                      onChange={e => handleStatusChange(colIdx, rowIdx, e.target.value)}
-                      disabled={locked}
-                    >
-                      {causeStatusOptions.map(opt => (
-                        <option key={opt.value} value={opt.value} style={{ color: opt.color, backgroundColor: opt.bg }}>{opt.label}</option>
-                      ))}
-                    </select>
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <div className="flex items-center my-4">
-          <div className="flex-1 h-2 bg-gradient-to-r from-[#ff8800] to-[#ffcc80] rounded-l-full" />
-          <span className="mx-2 font-bold text-orange-600">Cause</span>
-          <span className="mx-2 font-bold text-orange-600">→</span>
-          <span className="mx-2 font-bold text-orange-600">Effect</span>
-          <textarea
-            className="flex-1 h-10 border border-border rounded p-2 text-xs bg-white text-foreground resize-none ml-2"
-            value={data.mainProblem}
-            readOnly
-            aria-label="Main Problem (Effect)"
-          />
+            </Button>
+          ) : null}
         </div>
-        <table className="min-w-full border border-border bg-card rounded-lg mt-4" aria-labelledby="ishikawa-title">
-          <thead className="bg-muted">
-            <tr>
-              {orderedCategories.slice(3).map((cat, idx) => (
-                <th key={cat.name} scope="col" className="px-4 py-2 text-left text-foreground text-base" style={{ backgroundColor: '#1976d2', color: '#fff' }}>{cat.name}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {[0, 1, 2].map(rowIdx => (
-              <tr key={rowIdx} className="border-t border-border">
-                {orderedCategories.slice(3).map((cat, colIdx) => (
-                  <td key={colIdx} className="px-4 py-2 align-top" style={{ backgroundColor: '#fff' }}>
-                    <div className="relative">
-                      <textarea
-                        className="w-full h-16 border border-border rounded p-2 pr-7 text-xs text-foreground resize-none"
-                        style={{ backgroundColor: lockedCells[colIdx + 3]?.[rowIdx] ? '#e8f4fd' : 'white' }}
-                        value={editableCauses[colIdx + 3][rowIdx]}
-                        onChange={e => handleCauseEdit(colIdx + 3, rowIdx, e.target.value)}
-                        aria-label={`Cause for ${cat.name}`}
-                        disabled={locked || lockedCells[colIdx + 3]?.[rowIdx]}
-                      />
-                      <button
-                        className="absolute top-1 right-1 p-0.5 rounded hover:bg-gray-100 transition"
-                        onClick={() => toggleCellLock(colIdx + 3, rowIdx)}
-                        title={lockedCells[colIdx + 3]?.[rowIdx] ? 'Unlock this cause' : 'Lock this cause'}
-                        aria-label={lockedCells[colIdx + 3]?.[rowIdx] ? 'Unlock' : 'Lock'}
-                        type="button"
-                      >
-                        {lockedCells[colIdx + 3]?.[rowIdx]
-                          ? <Lock className="w-3 h-3 text-blue-600" />
-                          : <Unlock className="w-3 h-3 text-gray-400" />
-                        }
-                      </button>
-                    </div>
-                    <select
-                      className="mt-1 w-full text-xs rounded border border-border"
-                      aria-label={`Status for ${cat.name} cause ${rowIdx + 1}`}
-                      value={causeStatuses[colIdx + 3][rowIdx]}
-                      onChange={e => handleStatusChange(colIdx + 3, rowIdx, e.target.value)}
-                      disabled={locked}
-                    >
-                      {causeStatusOptions.map(opt => (
-                        <option key={opt.value} value={opt.value} style={{ color: opt.color, backgroundColor: opt.bg }}>{opt.label}</option>
-                      ))}
-                    </select>
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <div className="mt-6 flex flex-wrap gap-4 items-center">
-          <div className="flex items-center gap-2">
-            <span className="w-4 h-4 rounded bg-[#ff4d4d] border border-border" />
-            <span className="text-xs">Confirmed as Cause</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="w-4 h-4 rounded bg-[#ff8800] border border-border" />
-            <span className="text-xs">Possible Cause</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="w-4 h-4 rounded bg-[#008000] border border-border" />
-            <span className="text-xs">Excluded as Cause</span>
-          </div>
+      </div>
+
+      <div className="border-b border-border bg-muted/20 px-6 py-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <Badge variant="outline">Problem Statement</Badge>
+          <p className="text-sm font-medium text-foreground">{problem}</p>
         </div>
-        <div className="mt-8 flex justify-end gap-4">
-          {onRegenerate && (
-            <button
-              className="px-6 py-2 rounded bg-secondary text-foreground font-semibold shadow hover:bg-orange-700 hover:text-white transition flex items-center gap-2"
-              onClick={() => onRegenerate(lockedCells)}
-              aria-label="Regenerate unlocked causes"
+      </div>
+
+      <div className="space-y-6 p-6">
+        {TABLE_GROUPS.map((group, tableIndex) => (
+          <div key={group.join('-')} className="overflow-x-auto rounded-xl border border-border">
+            <table className="min-w-full border-collapse">
+              <thead>
+                <tr>
+                  {group.map((categoryName) => (
+                    <th
+                      key={categoryName}
+                      scope="col"
+                      className="bg-[#1976d2] px-4 py-3 text-left text-sm font-semibold text-white"
+                    >
+                      {categoryName}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {Array.from({ length: rowCount }, (_, rowIndex) => (
+                  <tr key={`${tableIndex}-${rowIndex}`}>
+                    {group.map((categoryName) => {
+                      const categoryIndex = orderedCategories.findIndex(
+                        (category) => category.category === categoryName,
+                      )
+
+                      return renderCell(categoryName, categoryIndex, rowIndex)
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ))}
+
+        <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+          <span className="flex items-center gap-2">
+            <span className="size-3 rounded-full bg-red-500" />
+            Confirmed
+          </span>
+          <span className="flex items-center gap-2">
+            <span className="size-3 rounded-full bg-orange-500" />
+            Possible
+          </span>
+          <span className="flex items-center gap-2">
+            <span className="size-3 rounded-full bg-green-600" />
+            Excluded
+          </span>
+        </div>
+
+        <div className="flex flex-wrap justify-end gap-3">
+          {onRegenerate ? (
+            <Button
               type="button"
+              variant="secondary"
+              onClick={() => onRegenerate(serializeCells(true).filter((category) => category.result.length > 0))}
+              disabled={busy}
             >
-              <RefreshCw className="w-4 h-4" />
-              Regenerate
-            </button>
-          )}
-          {!locked && (
-            <button
-              className="px-6 py-2 rounded bg-primary text-white font-semibold shadow hover:bg-orange-700 transition"
-              onClick={handleFinalize}
-              aria-label="Finalize Ishikawa Diagram"
-            >
+              <RefreshCw className="size-4" />
+              Regenerate Unlocked Causes
+            </Button>
+          ) : null}
+          {!locked ? (
+            <Button type="button" onClick={handleFinalize} disabled={busy}>
               Finalize Ishikawa
-            </button>
-          )}
-          <button
-            className="px-6 py-2 rounded bg-accent text-white font-semibold shadow hover:bg-orange-700 transition"
-            onClick={handleExport}
-            aria-label="Export Ishikawa Diagram"
-          >
+            </Button>
+          ) : null}
+          <Button type="button" variant="outline" onClick={handleExport} disabled={busy}>
             Export
-          </button>
+          </Button>
         </div>
-        {/* 5 Why Analysis Section */}
-        {confirmedCauses.length > 0 && (
-          <div className="mt-10">
-            <h3 className="text-xl font-bold mb-4 text-foreground">5 Why Analysis for Confirmed Causes</h3>
-            {confirmedCauses.map((item, idx) => (
-              <FiveWhyAnalysis key={idx} />
-            ))}
-          </div>
-        )}
       </div>
     </Card>
   )

@@ -1,253 +1,396 @@
 'use client'
 
-import { useState } from 'react'
-import { Card } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { MessageCircle, FileText, Loader2 } from 'lucide-react'
-import { Badge } from '@/components/ui/badge'
-import { IshikawaDiagram } from '@/components/ishikawa-diagram'
-import { FiveWhyAnalysis } from '@/components/five-why-analysis'
+import { startTransition, useMemo, useState } from 'react'
+import { AlertCircle, FileText, Loader2, MessageCircle, Sparkles } from 'lucide-react'
+
 import Chatbot from '@/components/chatbot'
 import EightDManager from '@/components/eightd-manager'
+import { FiveWhyAnalysis } from '@/components/five-why-analysis'
+import { IshikawaDiagram } from '@/components/ishikawa-diagram'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Textarea } from '@/components/ui/textarea'
+import {
+  type FiveWhyChainItem,
+  type IshikawaCategory,
+  getRootCauseApiBaseUrl,
+  normalizeFiveWhyAnalysis,
+  normalizeIshikawaCategories,
+  rootCauseApi,
+} from '@/lib/root-cause'
 
+const CURRENT_YEAR = new Date().getFullYear()
 
-// Random cause pools per classic Ishikawa category
-const CAUSE_POOLS: Record<string, string[]> = {
-  Man: [
-    'Operator skipped inspection step',
-    'Lack of training on updated procedure',
-    'Fatigue due to extended shift',
-    'Insufficient staffing during peak hours',
-    'High employee turnover in department',
-    'Poor communication between shifts',
-    'Operator used wrong tool revision',
-    'New hire not fully certified',
-    'Distraction during critical operation',
-  ],
-  Method: [
-    'Work instruction not updated after process change',
-    'No standardized procedure for this step',
-    'Incorrect torque sequence followed',
-    'Best practice not documented or shared',
-    'Rework process introduces additional defects',
-    'Setup verification step missing from SOP',
-    'Outdated control plan in use',
-    'Process FMEA not reviewed after design change',
-  ],
-  Machine: [
-    'Worn tooling not replaced on schedule',
-    'Fixture misalignment due to vibration',
-    'Calibration drift in measurement device',
-    'Preventive maintenance overdue',
-    'Machine parameter not within control limit',
-    'Sensor failure not detected early',
-    'Equipment not suitable for material hardness',
-    'Coolant system malfunction',
-  ],
-  Material: [
-    'Supplier part out of tolerance',
-    'Raw material hardness variance',
-    'Incorrect batch of adhesive used',
-    'Material stored in wrong environment',
-    'Certificate of conformance not verified',
-    'Contamination from previous batch',
-    'Incorrect surface finish on incoming part',
-    'Shelf life of material exceeded',
-  ],
-  Measurement: [
-    'Gauge R&R not performed for this feature',
-    'Measurement uncertainty too high',
-    'Wrong reference standard used',
-    'Inspector used incorrect measurement method',
-    'Measurement system not validated',
-    'Ambient temperature affected gauge reading',
-    'Sample size insufficient to detect defect',
-    'Measurement recorded at wrong interval',
-  ],
-  Environment: [
-    'Temperature variation exceeded process window',
-    'Humidity affected adhesive cure time',
-    'Poor lighting in inspection area',
-    'Vibration from adjacent equipment',
-    'Contaminated air supply to pneumatic tool',
-    'ESD controls not followed in sensitive area',
-    'Noise distraction during assembly task',
-    'Cleanroom protocol not observed',
-  ],
-}
+const EXAMPLES = [
+  'Customer complaints about inconsistent product quality in final inspection',
+  'Repeated downtime on the filling line during peak production hours',
+  'Late project delivery caused by cross-team dependency slips',
+  'High employee turnover in the packaging department',
+  'Escaped defects reaching customers despite in-process checks',
+]
 
-const pickUnique = (arr: string[], count: number): string[] => {
-  const shuffled = [...arr].sort(() => Math.random() - 0.5)
-  return shuffled.slice(0, count)
-}
+type BusyAction =
+  | 'analyze'
+  | 'regenerate-ishikawa'
+  | 'generate-five-why'
+  | 'regenerate-five-why'
+  | 'finalize'
+  | null
 
-const generateMockIshikawa = (_problem: string) => {
-  const categories = Object.entries(CAUSE_POOLS).map(([name, pool]) => ({
-    name,
-    causes: pickUnique(pool, 3),
-  }))
-  return { mainProblem: _problem, categories }
-}
-
-const generateMockFiveWhy = (problem: string) => {
-  return {
-    problem,
-    analysis: [
-      {
-        level: 1,
-        question: `Why is "${problem}" happening?`,
-        answer: 'The underlying process has inefficiencies and lacks proper oversight mechanisms.'
-      },
-      {
-        level: 2,
-        question: 'Why does the process have inefficiencies?',
-        answer: 'The current workflow was designed without considering modern best practices.'
-      },
-      {
-        level: 3,
-        question: 'Why were best practices not considered?',
-        answer: 'There was insufficient knowledge transfer and training during implementation.'
-      },
-      {
-        level: 4,
-        question: 'Why was there insufficient knowledge transfer?',
-        answer: 'The organization lacks a structured training and documentation program.'
-      },
-      {
-        level: 5,
-        question: 'Why does the organization lack structured training?',
-        answer: 'There is insufficient investment in knowledge management and continuous improvement initiatives.'
-      }
-    ],
-    rootCause: 'Insufficient organizational investment in knowledge management and continuous improvement',
-    recommendations: [
-      'Establish a formal training and certification program',
-      'Create comprehensive documentation standards',
-      'Implement a continuous improvement framework',
-      'Allocate budget for knowledge management systems',
-      'Create cross-functional learning groups'
-    ]
-  }
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : 'Something went wrong while contacting the API.'
 }
 
 function ChatbotFloating() {
   const [open, setOpen] = useState(false)
+
   return (
     <>
       <button
-        className="fixed bottom-6 right-6 z-50 bg-primary text-white rounded-full shadow-lg p-4 flex items-center gap-2 hover:bg-orange-700 transition"
+        className="fixed right-6 bottom-6 z-50 flex items-center gap-2 rounded-full bg-primary px-4 py-4 text-white shadow-lg transition hover:bg-orange-700"
         onClick={() => setOpen(true)}
         aria-label="Open Chatbot"
       >
-        <MessageCircle className="w-6 h-6" />
-        <span className="font-semibold hidden md:inline">Chatbot</span>
+        <MessageCircle className="size-6" />
+        <span className="hidden font-semibold md:inline">Chatbot</span>
       </button>
-      {open && (
-        <div className="fixed inset-0 z-50 flex items-end md:items-center justify-end bg-black/30">
-          <div className="relative w-full max-w-md md:max-w-xl m-4 md:m-12" onClick={e => e.stopPropagation()}>
+      {open ? (
+        <div className="fixed inset-0 z-50 flex items-end justify-end bg-black/30 md:items-center">
+          <div
+            className="relative m-4 w-full max-w-md md:m-12 md:max-w-xl"
+            onClick={(event) => event.stopPropagation()}
+          >
             <Chatbot />
             <button
-              className="absolute top-3 right-3 bg-accent text-white rounded-full p-2 shadow hover:bg-orange-700 transition"
+              className="absolute top-3 right-3 z-[60] rounded-full bg-accent p-2 text-white shadow transition hover:bg-orange-700"
               onClick={() => setOpen(false)}
               aria-label="Close Chatbot"
-              style={{ zIndex: 60 }}
             >
               ✕
             </button>
           </div>
         </div>
-      )}
+      ) : null}
     </>
   )
 }
 
 export default function Home() {
   const [problem, setProblem] = useState('')
-  const [ishikawaData, setIshikawaData] = useState<ReturnType<typeof generateMockIshikawa> | null>(null)
-  const [fiveWhyData, setFiveWhyData] = useState<ReturnType<typeof generateMockFiveWhy> | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [domain, setDomain] = useState('Manufacturing')
+  const [pastRecord, setPastRecord] = useState(String(CURRENT_YEAR))
+  const [ishikawaData, setIshikawaData] = useState<IshikawaCategory[] | null>(null)
+  const [fiveWhyData, setFiveWhyData] = useState<FiveWhyChainItem[] | null>(null)
+  const [finalSummary, setFinalSummary] = useState<Record<string, unknown> | null>(null)
+  const [busyAction, setBusyAction] = useState<BusyAction>(null)
   const [activeTab, setActiveTab] = useState('input')
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
+
+  const isBusy = busyAction !== null
+  const apiBaseUrl = useMemo(() => getRootCauseApiBaseUrl(), [])
+
+  const statusLabel = useMemo(() => {
+    switch (busyAction) {
+      case 'analyze':
+        return 'Generating Ishikawa diagram'
+      case 'regenerate-ishikawa':
+        return 'Refreshing unlocked Ishikawa causes'
+      case 'generate-five-why':
+        return 'Generating 5-Why analysis'
+      case 'regenerate-five-why':
+        return 'Refreshing unlocked 5-Why chains'
+      case 'finalize':
+        return 'Finalizing summary'
+      default:
+        return null
+    }
+  }, [busyAction])
+
+  const requestPayload = useMemo(
+    () => ({
+      domain: domain.trim(),
+      query: problem.trim(),
+      past_record: Number.parseInt(pastRecord, 10) || CURRENT_YEAR,
+    }),
+    [domain, pastRecord, problem],
+  )
 
   const handleAnalyze = async () => {
-    if (!problem.trim()) return
+    if (!requestPayload.query) {
+      return
+    }
 
-    setLoading(true)
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 1500))
+    setBusyAction('analyze')
+    setErrorMessage(null)
+    setFiveWhyData(null)
+    setFinalSummary(null)
 
-    setIshikawaData(generateMockIshikawa(problem))
-    setFiveWhyData(generateMockFiveWhy(problem))
-    setActiveTab('ishikawa')
-    setLoading(false)
+    try {
+      const response = await rootCauseApi.generateProblem(requestPayload)
+      setIshikawaData(normalizeIshikawaCategories(response.ishikawa))
+      startTransition(() => setActiveTab('ishikawa'))
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error))
+    } finally {
+      setBusyAction(null)
+    }
   }
 
-  const handleIshikawaRegenerate = (_lockedCells: boolean[][]) => {
-    // Generate fresh data; the IshikawaDiagram component will preserve locked cells
-    setIshikawaData(generateMockIshikawa(problem))
+  const handleIshikawaRegenerate = async (lockedData: IshikawaCategory[]) => {
+    if (!requestPayload.query) {
+      return
+    }
+
+    setBusyAction('regenerate-ishikawa')
+    setErrorMessage(null)
+    setFiveWhyData(null)
+    setFinalSummary(null)
+
+    try {
+      const response = await rootCauseApi.regenerateIshikawa({
+        ...requestPayload,
+        locked_result: lockedData,
+      })
+      setIshikawaData(normalizeIshikawaCategories(response.ishikawa))
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error))
+    } finally {
+      setBusyAction(null)
+    }
   }
 
-  const examples = [
-    'Customer complaints about product quality',
-    'High employee turnover rate',
-    'System downtime incidents',
-    'Project delivery delays',
-    'Budget overruns'
-  ]
+  const handleIshikawaFinalize = async (finalData: IshikawaCategory[]) => {
+    setBusyAction('generate-five-why')
+    setErrorMessage(null)
+    setIshikawaData(normalizeIshikawaCategories(finalData))
+    setFinalSummary(null)
 
-  const handleExample = (example: string) => {
-    setProblem(example)
+    try {
+      const response = await rootCauseApi.generateFiveWhy({
+        ...requestPayload,
+        ishikawa: finalData,
+      })
+      setFiveWhyData(normalizeFiveWhyAnalysis(response.analysis))
+      startTransition(() => setActiveTab('five-why'))
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error))
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
+  const handleFiveWhyRegenerate = async (lockedAnalysis: FiveWhyChainItem[]) => {
+    if (!ishikawaData) {
+      return
+    }
+
+    setBusyAction('regenerate-five-why')
+    setErrorMessage(null)
+    setFinalSummary(null)
+
+    try {
+      const response = await rootCauseApi.regenerateFiveWhy({
+        ...requestPayload,
+        ishikawa: ishikawaData,
+        locked_analysis: lockedAnalysis,
+      })
+      setFiveWhyData(normalizeFiveWhyAnalysis(response.analysis))
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error))
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
+  const handleFiveWhyFinalize = async (analysis: FiveWhyChainItem[]) => {
+    if (!ishikawaData) {
+      return
+    }
+
+    setBusyAction('finalize')
+    setErrorMessage(null)
+    setFiveWhyData(normalizeFiveWhyAnalysis(analysis))
+
+    try {
+      const response = await rootCauseApi.finalizeAnalysis({
+        domain: requestPayload.domain,
+        query: requestPayload.query,
+        ishikawa: ishikawaData,
+        analysis,
+      })
+      setFinalSummary(response.summary ?? {})
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error))
+    } finally {
+      setBusyAction(null)
+    }
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-background via-background to-muted/20 p-4 md:p-8">
-      <div className="max-w-6xl mx-auto">
-        {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-4xl md:text-5xl font-bold text-foreground mb-2">Problem Analyzer</h1>
-          <p className="text-lg text-muted-foreground">
-            Discover root causes using Ishikawa Diagrams and 5 Why Analysis
-          </p>
-        </div>
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(255,136,0,0.16),_transparent_30%),linear-gradient(135deg,_rgba(255,229,180,0.35),_transparent_42%),linear-gradient(180deg,_var(--background),_rgba(245,245,245,0.9))] px-4 py-6 md:px-8 md:py-10">
+      <div className="mx-auto max-w-7xl space-y-6">
+        <section className="overflow-hidden rounded-[2rem] border border-border/70 bg-card/95 shadow-sm backdrop-blur">
+          <div className="grid gap-8 px-6 py-8 md:grid-cols-[1.25fr_0.75fr] md:px-10 md:py-10">
+            <div className="space-y-5">
+              <Badge variant="outline" className="rounded-full px-3 py-1">
+                AI Root Cause Workflow
+              </Badge>
+              <div className="space-y-3">
+                <h1 className="max-w-3xl text-4xl font-bold tracking-tight text-foreground md:text-5xl">
+                  Turn one problem statement into an Ishikawa, a 5-Why chain, and a final
+                  action summary.
+                </h1>
+                <p className="max-w-2xl text-base leading-7 text-muted-foreground md:text-lg">
+                  The frontend is now wired to your FastAPI workflow, so the UI updates directly
+                  from `/problem`, `/regenerate`, `/gen-five-why`, `/regenerate-five-why`, and
+                  `/finalize`.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-3 text-sm text-muted-foreground">
+                <span className="rounded-full border border-border bg-muted/30 px-3 py-1">
+                  Editable mapped causes
+                </span>
+                <span className="rounded-full border border-border bg-muted/30 px-3 py-1">
+                  Lock-aware regeneration
+                </span>
+                <span className="rounded-full border border-border bg-muted/30 px-3 py-1">
+                  Final summary rendering
+                </span>
+              </div>
+            </div>
+
+            <Card className="gap-4 border-border bg-white/80 px-6 py-6">
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="size-5 text-primary" />
+                  <h2 className="text-lg font-semibold text-foreground">Connection Status</h2>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Configure `NEXT_PUBLIC_API_BASE_URL` if your backend is not running on the
+                  default host.
+                </p>
+              </div>
+              <div className="rounded-xl border border-border bg-muted/20 p-4">
+                <p className="text-xs uppercase tracking-[0.22em] text-muted-foreground">
+                  Active API base
+                </p>
+                <p className="mt-2 break-all text-sm font-medium text-foreground">{apiBaseUrl}</p>
+              </div>
+              {statusLabel ? (
+                <div className="flex items-center gap-3 rounded-xl border border-border bg-secondary/40 px-4 py-3 text-sm text-foreground">
+                  <Loader2 className="size-4 animate-spin" />
+                  {statusLabel}
+                </div>
+              ) : (
+                <div className="rounded-xl border border-border bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
+                  Ready for a new analysis run.
+                </div>
+              )}
+            </Card>
+          </div>
+        </section>
+
+        {errorMessage ? (
+          <Alert variant="destructive" className="border-destructive/40">
+            <AlertCircle className="size-4" />
+            <AlertTitle>Request failed</AlertTitle>
+            <AlertDescription>{errorMessage}</AlertDescription>
+          </Alert>
+        ) : null}
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-4 mb-6">
-            <TabsTrigger value="input">Input</TabsTrigger>
-            <TabsTrigger value="ishikawa" disabled={!ishikawaData}>Ishikawa</TabsTrigger>
-            <TabsTrigger value="five-why" disabled={!fiveWhyData}>5 Why</TabsTrigger>
-            <TabsTrigger value="eightd"><FileText className="inline w-4 h-4 mr-1" />8D Docs</TabsTrigger>
+          <TabsList className="grid h-auto w-full grid-cols-2 gap-2 rounded-2xl bg-card p-2 md:grid-cols-4">
+            <TabsTrigger value="input" className="rounded-xl">
+              Input
+            </TabsTrigger>
+            <TabsTrigger value="ishikawa" disabled={!ishikawaData?.length} className="rounded-xl">
+              Ishikawa
+            </TabsTrigger>
+            <TabsTrigger value="five-why" disabled={!fiveWhyData?.length} className="rounded-xl">
+              5 Why
+            </TabsTrigger>
+            <TabsTrigger value="eightd" className="rounded-xl">
+              <FileText className="mr-1 inline size-4" />
+              8D Docs
+            </TabsTrigger>
           </TabsList>
 
-          {/* Floating Chatbot Button and Modal */}
           <ChatbotFloating />
 
-          {/* 8D Document Upload/History Tab */}
-          <TabsContent value="eightd">
-            <EightDManager />
-          </TabsContent>
+          <TabsContent value="input" className="mt-6 space-y-6">
+            <Card className="gap-5 border-border px-6 py-6">
+              <div className="space-y-2">
+                <h2 className="text-2xl font-semibold text-foreground">Describe Your Problem</h2>
+                <p className="text-sm text-muted-foreground">
+                  Provide the problem statement and the context your backend expects for the
+                  analysis request.
+                </p>
+              </div>
 
-          {/* Input Tab */}
-          <TabsContent value="input" className="space-y-6">
-            <Card className="p-6 bg-card border-border">
-              <h2 className="text-xl font-semibold text-foreground mb-4">Describe Your Problem</h2>
-              <div className="space-y-4">
-                <Input
-                  placeholder="Enter the problem you want to analyze..."
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <label htmlFor="domain" className="text-sm font-medium text-foreground">
+                    Domain
+                  </label>
+                  <Input
+                    id="domain"
+                    value={domain}
+                    onChange={(event) => setDomain(event.target.value)}
+                    placeholder="Manufacturing"
+                    disabled={isBusy}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label htmlFor="past-record" className="text-sm font-medium text-foreground">
+                    Historical Reference Year
+                  </label>
+                  <Input
+                    id="past-record"
+                    type="number"
+                    min={1900}
+                    max={CURRENT_YEAR}
+                    value={pastRecord}
+                    onChange={(event) => setPastRecord(event.target.value)}
+                    placeholder={String(CURRENT_YEAR)}
+                    disabled={isBusy}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label htmlFor="problem" className="text-sm font-medium text-foreground">
+                  Problem Statement
+                </label>
+                <Textarea
+                  id="problem"
                   value={problem}
-                  onChange={(e) => setProblem(e.target.value)}
-                  className="text-base py-3"
-                  onKeyPress={(e) => e.key === 'Enter' && handleAnalyze()}
+                  onChange={(event) => setProblem(event.target.value)}
+                  placeholder="Describe the failure, symptom, or recurring issue you want to investigate..."
+                  className="min-h-32 resize-y"
+                  disabled={isBusy}
+                  onKeyDown={(event) => {
+                    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+                      void handleAnalyze()
+                    }
+                  }}
                 />
-                <Button
-                  onClick={handleAnalyze}
-                  disabled={!problem.trim() || loading}
-                  className="w-full"
-                  size="lg"
-                >
-                  {loading ? (
+                <p className="text-xs text-muted-foreground">
+                  Press `Ctrl/Cmd + Enter` to submit quickly.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <Badge variant="secondary" className="rounded-full px-3 py-1">
+                  Step 1 of 3: Generate Ishikawa
+                </Badge>
+                <Button onClick={handleAnalyze} disabled={!problem.trim() || isBusy} size="lg">
+                  {busyAction === 'analyze' ? (
                     <>
-                      <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                      <Loader2 className="size-4 animate-spin" />
                       Analyzing...
                     </>
                   ) : (
@@ -257,15 +400,22 @@ export default function Home() {
               </div>
             </Card>
 
-            {/* Examples */}
-            <Card className="p-6 bg-card border-border">
-              <h3 className="text-sm font-semibold text-muted-foreground mb-3 uppercase">Quick Examples</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {examples.map((example) => (
+            <Card className="gap-4 border-border px-6 py-6">
+              <div className="space-y-2">
+                <h3 className="text-sm font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                  Quick Examples
+                </h3>
+                <p className="text-sm text-muted-foreground">
+                  Use one of these to test the API wiring and the downstream tabs.
+                </p>
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                {EXAMPLES.map((example) => (
                   <button
                     key={example}
-                    onClick={() => handleExample(example)}
-                    className="p-3 text-left border border-border rounded-lg hover:bg-muted/50 transition-colors text-foreground text-sm font-medium"
+                    onClick={() => setProblem(example)}
+                    className="rounded-xl border border-border bg-white px-4 py-3 text-left text-sm font-medium text-foreground transition hover:bg-muted/40"
+                    disabled={isBusy}
                   >
                     {example}
                   </button>
@@ -274,14 +424,33 @@ export default function Home() {
             </Card>
           </TabsContent>
 
-          {/* Ishikawa Tab */}
-          <TabsContent value="ishikawa">
-            {ishikawaData && <IshikawaDiagram data={ishikawaData} onRegenerate={handleIshikawaRegenerate} />}
+          <TabsContent value="ishikawa" className="mt-6">
+            {ishikawaData ? (
+              <IshikawaDiagram
+                problem={problem}
+                data={ishikawaData}
+                busy={isBusy}
+                onRegenerate={handleIshikawaRegenerate}
+                onFinalize={handleIshikawaFinalize}
+              />
+            ) : null}
           </TabsContent>
 
-          {/* 5 Why Tab */}
-          <TabsContent value="five-why">
-            {fiveWhyData && <FiveWhyAnalysis />}
+          <TabsContent value="five-why" className="mt-6">
+            {fiveWhyData ? (
+              <FiveWhyAnalysis
+                problem={problem}
+                data={fiveWhyData}
+                summary={finalSummary}
+                busy={isBusy}
+                onRegenerate={handleFiveWhyRegenerate}
+                onFinalize={handleFiveWhyFinalize}
+              />
+            ) : null}
+          </TabsContent>
+
+          <TabsContent value="eightd" className="mt-6">
+            <EightDManager />
           </TabsContent>
         </Tabs>
       </div>
