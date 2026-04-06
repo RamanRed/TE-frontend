@@ -110,6 +110,8 @@ export function isMeaningfulIshikawaItem(item: IshikawaResultItem) {
   )
 }
 
+const MIN_RESULTS_PER_BONE = 3
+
 export function normalizeIshikawaCategories(categories: IshikawaCategory[] | null | undefined) {
   const byCategory = new Map(
     (categories ?? []).map((category) => [
@@ -124,11 +126,17 @@ export function normalizeIshikawaCategories(categories: IshikawaCategory[] | nul
 
   return CANONICAL_BONES.map((bone, index) => {
     const existing = byCategory.get(bone.toLowerCase())
+    const result = existing?.result ?? []
+
+    // Pad to at least MIN_RESULTS_PER_BONE so all sub-fields are visible in the table
+    while (result.length < MIN_RESULTS_PER_BONE) {
+      result.push(createEmptyIshikawaItem())
+    }
 
     return {
       id: existing?.id ?? index + 1,
       category: bone,
-      result: existing?.result ?? [],
+      result,
     }
   })
 }
@@ -175,46 +183,60 @@ export function normalizeFiveWhyAnalysis(items: FiveWhyChainItem[] | null | unde
 const API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000').replace(/\/$/, '')
 const API_ROOT = API_BASE_URL.endsWith('/api') ? API_BASE_URL : `${API_BASE_URL}/api`
 
-async function apiRequest<T>(path: string, body: unknown): Promise<T> {
-  const response = await fetch(`${API_ROOT}${path}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  })
+async function apiRequest<T>(path: string, body: unknown, timeoutMs = 120_000): Promise<T> {
+  const controller = new AbortController()
+  const timerId = setTimeout(() => controller.abort(), timeoutMs)
 
-  const payload = await response
-    .json()
-    .catch(() => ({ detail: 'Unable to parse server response.' }))
+  try {
+    const response = await fetch(`${API_ROOT}${path}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    })
 
-  if (!response.ok) {
-    const detail =
-      payload && typeof payload.detail === 'string'
-        ? payload.detail
-        : `Request failed with status ${response.status}.`
+    const payload = await response
+      .json()
+      .catch(() => ({ detail: 'Unable to parse server response.' }))
 
-    throw new Error(detail)
+    if (!response.ok) {
+      const detail =
+        payload && typeof payload.detail === 'string'
+          ? payload.detail
+          : `Request failed with status ${response.status}.`
+
+      throw new Error(detail)
+    }
+
+    return payload as T
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw new Error(`Request timed out after ${timeoutMs / 1000}s. The analysis is taking longer than expected — please try again.`)
+    }
+    throw err
+  } finally {
+    clearTimeout(timerId)
   }
-
-  return payload as T
 }
 
 export const rootCauseApi = {
   generateProblem(body: RootCauseProblemRequest) {
-    return apiRequest<RootCauseProblemResponse>('/problem', body)
+    // Ishikawa generation can take up to 15 minutes on slow hardware
+    return apiRequest<RootCauseProblemResponse>('/problem', body, 960_000)
   },
   regenerateIshikawa(body: RootCauseRegenerateRequest) {
-    return apiRequest<RootCauseRegenerateResponse>('/regenerate', body)
+    return apiRequest<RootCauseRegenerateResponse>('/regenerate', body, 960_000)
   },
   generateFiveWhy(body: RootCauseFiveWhyRequest) {
-    return apiRequest<RootCauseFiveWhyResponse>('/gen-five-why', body)
+    return apiRequest<RootCauseFiveWhyResponse>('/gen-five-why', body, 960_000)
   },
   regenerateFiveWhy(body: RootCauseRegenerateFiveWhyRequest) {
-    return apiRequest<RootCauseFiveWhyResponse>('/regenerate-five-why', body)
+    return apiRequest<RootCauseFiveWhyResponse>('/regenerate-five-why', body, 960_000)
   },
   finalizeAnalysis(body: RootCauseFinalizeRequest) {
-    return apiRequest<RootCauseFinalizeResponse>('/finalize', body)
+    return apiRequest<RootCauseFinalizeResponse>('/finalize', body, 180_000)
   },
 }
 
