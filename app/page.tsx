@@ -1,6 +1,6 @@
 'use client'
 
-import { startTransition, useMemo, useState } from 'react'
+import { startTransition, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertCircle, FileText, Loader2, MessageCircle, Sparkles } from 'lucide-react'
 
 import Chatbot from '@/components/chatbot'
@@ -92,6 +92,26 @@ export default function Home() {
 
   const isBusy = busyAction !== null
   const apiBaseUrl = useMemo(() => getRootCauseApiBaseUrl(), [])
+
+  // Track elapsed seconds during busy operations so users know it's still running
+  const [elapsedSeconds, setElapsedSeconds] = useState(0)
+  const elapsedRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  useEffect(() => {
+    if (busyAction) {
+      setElapsedSeconds(0)
+      elapsedRef.current = setInterval(() => setElapsedSeconds((s) => s + 1), 1000)
+    } else {
+      if (elapsedRef.current) {
+        clearInterval(elapsedRef.current)
+        elapsedRef.current = null
+      }
+      setElapsedSeconds(0)
+    }
+    return () => {
+      if (elapsedRef.current) clearInterval(elapsedRef.current)
+    }
+  }, [busyAction])
 
   const statusLabel = useMemo(() => {
     switch (busyAction) {
@@ -283,7 +303,14 @@ export default function Home() {
               {statusLabel ? (
                 <div className="flex items-center gap-3 rounded-xl border border-border bg-secondary/40 px-4 py-3 text-sm text-foreground">
                   <Loader2 className="size-4 animate-spin" />
-                  {statusLabel}
+                  <span>
+                    {statusLabel}
+                    {elapsedSeconds > 5 ? (
+                      <span className="ml-2 text-xs text-muted-foreground">
+                        ({elapsedSeconds}s — LLM inference can take several minutes)
+                      </span>
+                    ) : null}
+                  </span>
                 </div>
               ) : (
                 <div className="rounded-xl border border-border bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
