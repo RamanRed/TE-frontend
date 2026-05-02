@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Lock, RefreshCw, Unlock } from 'lucide-react'
+import { Lock, RefreshCw, Unlock, Download, ImageIcon, Loader2 } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -61,6 +61,10 @@ export function FiveWhyAnalysis({
   const [lockedRows, setLockedRows] = useState<boolean[]>(() =>
     normalizedData.map(() => false),
   )
+
+  const [imageSrc, setImageSrc] = useState<string | null>(null)
+  const [imageLoading, setImageLoading] = useState(false)
+  const [imageError, setImageError] = useState<string | null>(null)
 
   const lockedRowsRef = useRef(lockedRows)
   useEffect(() => {
@@ -167,6 +171,42 @@ export function FiveWhyAnalysis({
     anchor.click()
     document.body.removeChild(anchor)
     URL.revokeObjectURL(url)
+  }
+
+  const handleDownloadImage = () => {
+    if (!imageSrc) return
+    const link = document.createElement('a')
+    link.href = imageSrc
+    link.download = 'five-why-analysis.png'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  }
+
+  const handleGenerateImage = async () => {
+    setImageLoading(true)
+    setImageError(null)
+
+    try {
+      const response = await fetch('http://localhost:4000/generate-five-why', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          problem,
+          analysis: serializeAnalysis(false),
+          summary: summary ?? {},
+        }),
+      })
+      if (!response.ok) throw new Error(`Server error: ${response.statusText}`)
+      const blob = await response.blob()
+      const url = URL.createObjectURL(blob)
+      setImageSrc(url)
+    } catch (error) {
+      console.error('Error generating image:', error)
+      setImageError(error instanceof Error ? error.message : 'Failed to generate image')
+    } finally {
+      setImageLoading(false)
+    }
   }
 
   return (
@@ -309,6 +349,19 @@ export function FiveWhyAnalysis({
         <Button type="button" variant="outline" onClick={handleExport} disabled={busy}>
           Export
         </Button>
+        <Button type="button" variant="outline" onClick={handleGenerateImage} disabled={busy || imageLoading}>
+          {imageLoading ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Generating...
+            </>
+          ) : (
+            <>
+              <ImageIcon className="mr-2 h-4 w-4" />
+              Render PNG
+            </>
+          )}
+        </Button>
       </div>
 
       {summary && Object.keys(summary).length > 0 ? (
@@ -337,6 +390,52 @@ export function FiveWhyAnalysis({
           </div>
         </Card>
       ) : null}
+
+      <Card className="p-6 border-border bg-card/50">
+        <div className="flex flex-col gap-4">
+          <div className="flex items-center justify-between">
+            <div className="space-y-1">
+              <h3 className="text-lg font-semibold">Generate Visual Diagram</h3>
+              <p className="text-sm text-muted-foreground">
+                Send the current data to the local server (Port 4000) to render a PNG image.
+              </p>
+            </div>
+            <Button onClick={handleGenerateImage} disabled={busy || imageLoading}>
+              {imageLoading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Generating...
+                </>
+              ) : (
+                <>
+                  <ImageIcon className="mr-2 h-4 w-4" />
+                  Render PNG
+                </>
+              )}
+            </Button>
+          </div>
+
+          {imageError && (
+            <div className="p-3 text-sm text-red-500 bg-red-100/50 rounded-lg border border-red-200">
+              {imageError}
+            </div>
+          )}
+
+          {imageSrc && (
+            <div className="relative mt-4 group">
+              <div className="overflow-hidden rounded-lg border border-border bg-white shadow-inner">
+                <img src={imageSrc} alt="5-Why Analysis Diagram" className="w-full h-auto" />
+              </div>
+              <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                <Button size="sm" variant="secondary" onClick={handleDownloadImage}>
+                  <Download className="mr-2 h-4 w-4" />
+                  Download PNG
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      </Card>
     </div>
   )
 }
