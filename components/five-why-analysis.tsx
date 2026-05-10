@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { type FiveWhyChainItem, normalizeFiveWhyAnalysis } from '@/lib/root-cause'
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000'
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000'
 
 function clampConfidence(value: string) {
   const parsed = Number(value)
@@ -25,7 +25,7 @@ function clampConfidence(value: string) {
 function hasMeaningfulChain(item: FiveWhyChainItem) {
   return Boolean(
     item.root_cause.trim() ||
-      item.why_chain.some((step) => step.question.trim() || step.answer.trim()),
+    item.why_chain.some((step) => step.question.trim() || step.answer.trim()),
   )
 }
 
@@ -92,9 +92,9 @@ export function FiveWhyAnalysis({
       previous.map((item, currentIndex) =>
         currentIndex === rowIndex
           ? {
-              ...item,
-              root_cause: value,
-            }
+            ...item,
+            root_cause: value,
+          }
           : item,
       ),
     )
@@ -105,9 +105,9 @@ export function FiveWhyAnalysis({
       previous.map((item, currentIndex) =>
         currentIndex === rowIndex
           ? {
-              ...item,
-              confidence: clampConfidence(value),
-            }
+            ...item,
+            confidence: clampConfidence(value),
+          }
           : item,
       ),
     )
@@ -123,16 +123,16 @@ export function FiveWhyAnalysis({
       previous.map((item, currentIndex) =>
         currentIndex === rowIndex
           ? {
-              ...item,
-              why_chain: item.why_chain.map((step, currentStepIndex) =>
-                currentStepIndex === stepIndex
-                  ? {
-                      ...step,
-                      [field]: value,
-                    }
-                  : step,
-              ),
-            }
+            ...item,
+            why_chain: item.why_chain.map((step, currentStepIndex) =>
+              currentStepIndex === stepIndex
+                ? {
+                  ...step,
+                  [field]: value,
+                }
+                : step,
+            ),
+          }
           : item,
       ),
     )
