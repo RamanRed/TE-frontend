@@ -30,7 +30,7 @@ export interface SaveAnalysisResponse {
   supabase_skipped?: boolean
 }
 
-export interface HistoryRequest extends SecurityTriplet {}
+export interface HistoryRequest extends SecurityTriplet { }
 
 export interface HistorySession {
   session_id: string
@@ -117,6 +117,8 @@ async function historyRequest<T>(path: string, body: unknown): Promise<T> {
   })
 
   const payload = await response.json().catch(() => ({ detail: 'Unable to parse server response.' }))
+
+  console.log(payload);
 
   if (!response.ok) {
     const detail =

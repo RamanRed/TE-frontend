@@ -1,7 +1,7 @@
 'use client'
 
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertCircle, CheckCircle2, FileText, History, Loader2, MessageCircle, Sparkles } from 'lucide-react'
+import { AlertCircle, CheckCircle2, FileText, History, Loader2, MessageCircle, RefreshCw, Sparkles } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 
 import Chatbot from '@/components/chatbot'
@@ -56,8 +56,8 @@ function SaveToast({ state }: { state: SaveToast }) {
   if (!state) return null
   const configs = {
     saving: { bg: '#f9fafb', border: '#e5e7eb', color: '#374151', icon: <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />, text: 'Saving to history…' },
-    saved:  { bg: '#f0fdf4', border: '#bbf7d0', color: '#15803d', icon: <CheckCircle2 size={13} />, text: 'Saved to history' },
-    error:  { bg: '#fef2f2', border: '#fecaca', color: '#dc2626', icon: <AlertCircle size={13} />, text: 'Save failed — check console' },
+    saved: { bg: '#f0fdf4', border: '#bbf7d0', color: '#15803d', icon: <CheckCircle2 size={13} />, text: 'Saved to history' },
+    error: { bg: '#fef2f2', border: '#fecaca', color: '#dc2626', icon: <AlertCircle size={13} />, text: 'Save failed — check console' },
   } as const
   const c = configs[state]
   return (
@@ -117,6 +117,7 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState('input')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [saveToast, setSaveToast] = useState<SaveToast>(null)
+  const [historyRefreshKey, setHistoryRefreshKey] = useState(0)
 
   const isBusy = busyAction !== null
   const apiBaseUrl = useMemo(() => getRootCauseApiBaseUrl(), [])
@@ -135,7 +136,12 @@ export default function Home() {
         ishikawa,
         analysis: fiveWhys,
       })
-      setSaveToast(res.success ? 'saved' : 'error')
+      if (res.success) {
+        setSaveToast('saved')
+        setHistoryRefreshKey(prev => prev + 1)
+      } else {
+        setSaveToast('error')
+      }
     } catch (err) {
       console.error('Auto-save failed:', err)
       setSaveToast('error')
@@ -156,7 +162,7 @@ export default function Home() {
         setIshikawaData(normalizeIshikawaCategories(s.ishikawa))
         setFiveWhyData(normalizeFiveWhyAnalysis(s.fiveWhys))
         setFinalSummary(null)
-        startTransition(() => setActiveTab('ishikawa'))
+        setActiveTab('ishikawa')
       }
     } catch { /* ignore */ }
   }, [])
@@ -222,21 +228,28 @@ export default function Home() {
   }
 
   /**
-   * "Finalize Ishikawa" → generates 5-Why, then auto-saves both to history silently.
+   * "Finalize Ishikawa" → generates 5-Why only. No save here.
+   * Save happens at the last stage (Finalize Analysis).
    */
-  const handleIshikawaFinalize = async (finalData: IshikawaCategory[]) => {
+  const handleIshikawaFinalize = async (fullData: IshikawaCategory[]) => {
     setBusyAction('generate-five-why')
     setErrorMessage(null)
-    const normalizedIshikawa = normalizeIshikawaCategories(finalData)
-    setIshikawaData(normalizedIshikawa)
+    // Store the full dataset in state
+    const normalizedFull = normalizeIshikawaCategories(fullData)
+    setIshikawaData(normalizedFull)
     setFinalSummary(null)
     try {
-      const res = await rootCauseApi.generateFiveWhy({ ...requestPayload, ishikawa: finalData })
+      // 5-Why API receives only high/critical severity causes (immediate_action = true)
+      // so the LLM focuses on the most impactful root causes
+      const filteredForFiveWhy = fullData.map(cat => ({
+        ...cat,
+        result: cat.result.filter(item => item.immediate_action),
+      }))
+      const res = await rootCauseApi.generateFiveWhy({ ...requestPayload, ishikawa: filteredForFiveWhy })
       const normalized5Why = normalizeFiveWhyAnalysis(res.analysis)
       setFiveWhyData(normalized5Why)
       startTransition(() => setActiveTab('five-why'))
-      // Auto-save silently — no modal
-      void autoSave(normalizedIshikawa, normalized5Why, requestPayload.query)
+      // ── No auto-save here. Save is triggered only on Finalize Analysis. ──
     } catch (err) { setErrorMessage(getErrorMessage(err)) }
     finally { setBusyAction(null) }
   }
@@ -254,7 +267,8 @@ export default function Home() {
   }
 
   /**
-   * "Finalize Analysis" (5-Why) → generates final summary, then auto-saves again silently.
+   * "Finalize Analysis" (5-Why) → the ONLY point where a save is triggered.
+   * Generates the final summary, then auto-saves the full session silently.
    */
   const handleFiveWhyFinalize = async (analysis: FiveWhyChainItem[]) => {
     if (!ishikawaData) return
@@ -270,7 +284,7 @@ export default function Home() {
         analysis,
       })
       setFinalSummary(res.summary ?? {})
-      // Auto-save silently with latest data
+      // ── Only save point: triggered after the complete workflow is done ──
       void autoSave(ishikawaData, normalized5Why, requestPayload.query)
     } catch (err) { setErrorMessage(getErrorMessage(err)) }
     finally { setBusyAction(null) }
@@ -284,203 +298,290 @@ export default function Home() {
     setFiveWhyData(normalizeFiveWhyAnalysis(session.fiveWhys))
     setFinalSummary(null)
     setErrorMessage(null)
-    startTransition(() => setActiveTab('ishikawa'))
+    setActiveTab('ishikawa')
   }
 
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', overflow: 'hidden' }}>
+    <div style={{ display: 'flex', minHeight: '100vh', overflow: 'hidden', background: '#fdfdfd' }}>
 
       {/* ── Left History Sidebar ── */}
-      <HistorySidebar onLoad={handleHistoryLoad} />
+      <HistorySidebar onLoad={handleHistoryLoad} refreshTrigger={historyRefreshKey} />
 
       {/* ── Main Content ── */}
       <div
-        style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}
-        className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(255,136,0,0.16),_transparent_30%),linear-gradient(135deg,_rgba(255,229,180,0.35),_transparent_42%),linear-gradient(180deg,_var(--background),_rgba(245,245,245,0.9))] px-4 py-6 md:px-8 md:py-10"
+        style={{
+          flex: 1,
+          height: '100vh',
+          overflowY: 'auto',
+          display: 'flex',
+          flexDirection: 'column',
+          position: 'relative',
+        }}
       >
-        <div className="mx-auto max-w-7xl space-y-6">
+        {/* Header Navigation */}
+        <header style={{
+          height: 64, borderBottom: '1px solid #f1f5f9', background: '#fff',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '0 32px', position: 'sticky', top: 0, zIndex: 20,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{
+              background: 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)',
+              width: 32, height: 32, borderRadius: 10,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Sparkles size={18} color="#fff" strokeWidth={2.5} />
+            </div>
+            <h1 style={{ fontSize: 18, fontWeight: 800, color: '#0f172a', letterSpacing: '-0.02em', margin: 0 }}>
+              TE <span style={{ color: '#f97316' }}>RootCause</span>
+            </h1>
+          </div>
 
-          {/* Hero section */}
-          <section className="overflow-hidden rounded-[2rem] border border-border/70 bg-card/95 shadow-sm backdrop-blur">
-            <div className="grid gap-8 px-6 py-8 md:grid-cols-[1.25fr_0.75fr] md:px-10 md:py-10">
-              <div className="space-y-5">
-                <Badge variant="outline" className="rounded-full px-3 py-1">
-                  AI Root Cause Workflow
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <Button variant="ghost" size="sm" onClick={() => router.push('/history')} className="gap-2 text-slate-600 font-semibold hover:bg-slate-50">
+              <History size={16} /> Repository
+            </Button>
+            <div style={{ width: 1, height: 20, background: '#e2e8f0' }} />
+            <Button variant="outline" size="sm" onClick={() => window.location.reload()} className="gap-2 text-slate-600 font-semibold border-slate-200">
+              <RefreshCw size={14} /> New Session
+            </Button>
+          </div>
+        </header>
+
+        <main style={{ flex: 1, padding: '40px 32px 80px' }}>
+          <div style={{ maxWidth: 1200, margin: '0 auto' }}>
+
+            {/* Hero Section */}
+            {activeTab === 'input' && (
+              <div style={{ textAlign: 'center', marginBottom: 48, animation: 'fadeInDown 0.6s ease' }}>
+                <Badge variant="outline" className="mb-4 px-3 py-1 bg-orange-50 text-orange-700 border-orange-200 font-bold uppercase tracking-wider text-[10px]">
+                  Powered by Advanced Reasoning
                 </Badge>
-                <div className="space-y-3">
-                  <h1 className="max-w-3xl text-4xl font-bold tracking-tight text-foreground md:text-5xl">
-                    Turn one problem statement into an Ishikawa, a 5-Why chain, and a final action summary.
-                  </h1>
-                  <p className="max-w-2xl text-base leading-7 text-muted-foreground md:text-lg">
-                    Analyses are automatically saved to history when you finalize the Ishikawa or the 5-Why.
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-3 text-sm text-muted-foreground">
-                  <span className="rounded-full border border-border bg-muted/30 px-3 py-1">Editable mapped causes</span>
-                  <span className="rounded-full border border-border bg-muted/30 px-3 py-1">Lock-aware regeneration</span>
-                  <span className="rounded-full border border-border bg-muted/30 px-3 py-1">Auto-saved to history</span>
-                </div>
-                <Button variant="outline" size="sm" className="gap-2" onClick={() => router.push('/history')}>
-                  <History className="size-4" />
-                  View Full History
-                </Button>
-              </div>
+                <h2 style={{ fontSize: 42, fontWeight: 900, color: '#0f172a', letterSpacing: '-0.04em', lineHeight: 1.1, marginBottom: 16 }}>
+                  Identify the <span style={{ color: '#f97316' }}>True Cause</span> of Every Problem
+                </h2>
+                <p style={{ fontSize: 18, color: '#64748b', maxWidth: 600, margin: '0 auto', lineHeight: 1.6, fontWeight: 500 }}>
+                  A sophisticated diagnostic suite combining Ishikawa mapping with iterative 5-Why discovery to prevent recurrences.
+                </p>
 
-              <Card className="gap-4 border-border bg-white/80 px-6 py-6">
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <Sparkles className="size-5 text-primary" />
-                    <h2 className="text-lg font-semibold text-foreground">Connection Status</h2>
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    Configure <code>NEXT_PUBLIC_API_BASE_URL</code> if your backend is not on the default host.
-                  </p>
-                </div>
-                <div className="rounded-xl border border-border bg-muted/20 p-4">
-                  <p className="text-xs uppercase tracking-[0.22em] text-muted-foreground">Active API base</p>
-                  <p className="mt-2 break-all text-sm font-medium text-foreground">{apiBaseUrl}</p>
-                </div>
-                {statusLabel ? (
-                  <div className="flex items-center gap-3 rounded-xl border border-border bg-secondary/40 px-4 py-3 text-sm text-foreground">
-                    <Loader2 className="size-4 animate-spin" />
-                    <span>
+                {/* Status Bar */}
+                {statusLabel && (
+                  <div style={{
+                    maxWidth: 600, margin: '24px auto 0', padding: '12px 20px',
+                    background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 12,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+                  }}>
+                    <Loader2 size={16} className="animate-spin text-orange-500" />
+                    <span style={{ fontSize: 14, fontWeight: 600, color: '#475569' }}>
                       {statusLabel}
-                      {elapsedSeconds > 5 && (
-                        <span className="ml-2 text-xs text-muted-foreground">
-                          ({elapsedSeconds}s — LLM inference can take several minutes)
-                        </span>
-                      )}
+                      {elapsedSeconds > 5 && ` (${elapsedSeconds}s)`}
                     </span>
                   </div>
-                ) : (
-                  <div className="rounded-xl border border-border bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
-                    Ready for a new analysis run.
+                )}
+              </div>
+            )}
+
+            <Tabs value={activeTab} onValueChange={setActiveTab} style={{ width: '100%' }}>
+              <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 32 }}>
+                <TabsList className="bg-slate-100 p-1 rounded-xl h-12 border border-slate-200">
+                  <TabsTrigger value="input" className="rounded-lg px-6 font-bold data-[state=active]:bg-white data-[state=active]:text-orange-600 data-[state=active]:shadow-sm">
+                    Input
+                  </TabsTrigger>
+                  <TabsTrigger value="ishikawa" disabled={!ishikawaData?.length} className="rounded-lg px-6 font-bold data-[state=active]:bg-white data-[state=active]:text-orange-600 data-[state=active]:shadow-sm">
+                    Ishikawa
+                  </TabsTrigger>
+                  <TabsTrigger value="five-why" disabled={!fiveWhyData?.length} className="rounded-lg px-6 font-bold data-[state=active]:bg-white data-[state=active]:text-orange-600 data-[state=active]:shadow-sm">
+                    5-Why
+                  </TabsTrigger>
+                </TabsList>
+              </div>
+
+              {/* Step 1: Input */}
+              <TabsContent value="input" className="animation-fadeIn">
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 24, maxWidth: 800, margin: '0 auto' }}>
+                  <Card className="border-slate-200 shadow-xl shadow-slate-200/50 rounded-2xl overflow-hidden">
+                    <div style={{ padding: '32px' }}>
+                      <div className="space-y-8">
+                        <div>
+                          <label className="block text-sm font-bold text-slate-800 mb-3 flex items-center gap-2">
+                            PROBLEM STATEMENT
+                          </label>
+                          <Textarea
+                            placeholder="Describe the failure mode, defect, or inefficiency in detail..."
+                            value={problem}
+                            onChange={(e) => setProblem(e.target.value)}
+                            className="min-h-[120px] resize-none text-lg border-slate-200 focus:border-orange-500 focus:ring-orange-200 rounded-xl bg-slate-50/50"
+                            disabled={isBusy}
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-8">
+                          <div>
+                            <label className="block text-sm font-bold text-slate-800 mb-3 flex items-center gap-2">
+                              DOMAIN / MODULE
+                            </label>
+                            <Input
+                              placeholder="e.g., Manufacturing"
+                              value={domain}
+                              onChange={(e) => setDomain(e.target.value)}
+                              className="h-12 border-slate-200 focus:border-orange-500 focus:ring-orange-200 rounded-xl"
+                              disabled={isBusy}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-bold text-slate-800 mb-3 flex items-center gap-2">
+                              REFERENCE YEAR
+                            </label>
+                            <Input
+                              placeholder={String(CURRENT_YEAR)}
+                              value={pastRecord}
+                              onChange={(e) => setPastRecord(e.target.value)}
+                              className="h-12 border-slate-200 focus:border-orange-500 focus:ring-orange-200 rounded-xl"
+                              disabled={isBusy}
+                            />
+                          </div>
+                        </div>
+
+                        {errorMessage && (
+                          <Alert variant="destructive" className="bg-red-50 border-red-200 text-red-900 rounded-xl">
+                            <AlertCircle className="h-4 w-4" />
+                            <AlertTitle className="font-bold">Error Detected</AlertTitle>
+                            <AlertDescription>{errorMessage}</AlertDescription>
+                          </Alert>
+                        )}
+
+                        <Button
+                          size="lg"
+                          className="w-full h-14 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-lg font-bold shadow-lg shadow-slate-200 transition-all active:scale-[0.98]"
+                          onClick={handleAnalyze}
+                          disabled={!problem.trim() || isBusy}
+                        >
+                          {busyAction === 'analyze' ? (
+                            <>
+                              <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                              Analyzing Problem...
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles className="mr-2 h-5 w-5" />
+                              Generate Root Cause Map
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+                  </Card>
+
+                  {/* Examples Card */}
+                  <Card className="border-slate-200 shadow-sm rounded-2xl p-6 bg-slate-50/30">
+                    <h3 style={{ fontSize: 13, fontWeight: 800, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 16 }}>
+                      Quick Examples
+                    </h3>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 12 }}>
+                      {EXAMPLES.map(example => (
+                        <button
+                          key={example}
+                          onClick={() => setProblem(example)}
+                          style={{
+                            padding: '12px 16px', background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12,
+                            fontSize: 13, color: '#475569', fontWeight: 600, textAlign: 'left',
+                            cursor: 'pointer', transition: 'all 0.2s',
+                          }}
+                          onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = '#f97316'; (e.currentTarget as HTMLButtonElement).style.background = '#fff' }}
+                          onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = '#e2e8f0'; (e.currentTarget as HTMLButtonElement).style.background = '#fff' }}
+                          disabled={isBusy}
+                        >
+                          {example}
+                        </button>
+                      ))}
+                    </div>
+                  </Card>
+                </div>
+              </TabsContent>
+
+              {/* Step 2: Ishikawa */}
+              <TabsContent value="ishikawa" className="animation-fadeIn">
+                {ishikawaData && (
+                  <div className="space-y-8">
+                    <Card className="border-slate-200 shadow-xl shadow-slate-200/50 rounded-2xl p-8 bg-white">
+                      <IshikawaDiagram
+                        problem={problem}
+                        data={ishikawaData}
+                        busy={isBusy}
+                        onRegenerate={handleIshikawaRegenerate}
+                        onFinalize={handleIshikawaFinalize}
+                      />
+                    </Card>
+                    <div style={{ textAlign: 'center' }}>
+                      <IshikawaImageRequest problem={problem} data={ishikawaData} />
+                    </div>
                   </div>
                 )}
-              </Card>
+              </TabsContent>
+
+              {/* Step 3: 5-Why */}
+              <TabsContent value="five-why" className="animation-fadeIn">
+                {fiveWhyData && (
+                  <Card className="border-slate-200 shadow-xl shadow-slate-200/50 rounded-2xl p-8 bg-white">
+                    <FiveWhyAnalysis
+                      problem={problem}
+                      data={fiveWhyData}
+                      summary={finalSummary}
+                      busy={isBusy}
+                      onRegenerate={handleFiveWhyRegenerate}
+                      onFinalize={handleFiveWhyFinalize}
+                    />
+                  </Card>
+                )}
+              </TabsContent>
+            </Tabs>
+          </div>
+        </main>
+
+        <ChatbotFloating />
+
+        {/* Save Toast */}
+        {saveToast && (
+          <div style={{
+            position: 'fixed', bottom: 32, right: 32, zIndex: 100,
+            animation: 'slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1)',
+          }}>
+            <div style={{
+              background: '#0f172a', color: '#fff', padding: '12px 20px',
+              borderRadius: 14, boxShadow: '0 10px 30px rgba(0,0,0,0.2)',
+              display: 'flex', alignItems: 'center', gap: 12, border: '1px solid rgba(255,255,255,0.1)',
+            }}>
+              {saveToast === 'saving' && <Loader2 className="animate-spin size-4 text-orange-400" />}
+              {saveToast === 'saved' && <CheckCircle2 className="size-4 text-green-400" />}
+              {saveToast === 'error' && <AlertCircle className="size-4 text-red-400" />}
+              <span style={{ fontSize: 13, fontWeight: 700 }}>
+                {saveToast === 'saving' ? 'Synching to cloud...' :
+                  saveToast === 'saved' ? 'Analysis secured in history' :
+                    'Network error during save'}
+              </span>
             </div>
-          </section>
-
-          {errorMessage && (
-            <Alert variant="destructive" className="border-destructive/40">
-              <AlertCircle className="size-4" />
-              <AlertTitle>Request failed</AlertTitle>
-              <AlertDescription>{errorMessage}</AlertDescription>
-            </Alert>
-          )}
-
-          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <TabsList className="grid h-auto w-full grid-cols-2 gap-2 rounded-2xl bg-card p-2 md:grid-cols-4">
-              <TabsTrigger value="input" className="rounded-xl">Input</TabsTrigger>
-              <TabsTrigger value="ishikawa" disabled={!ishikawaData?.length} className="rounded-xl">Ishikawa</TabsTrigger>
-              <TabsTrigger value="five-why" disabled={!fiveWhyData?.length} className="rounded-xl">5 Why</TabsTrigger>
-              <TabsTrigger value="eightd" className="rounded-xl">
-                <FileText className="mr-1 inline size-4" />8D Docs
-              </TabsTrigger>
-            </TabsList>
-
-            <ChatbotFloating />
-
-            {/* Input tab */}
-            <TabsContent value="input" className="mt-6 space-y-6">
-              <Card className="gap-5 border-border px-6 py-6">
-                <div className="space-y-2">
-                  <h2 className="text-2xl font-semibold text-foreground">Describe Your Problem</h2>
-                  <p className="text-sm text-muted-foreground">
-                    Provide the problem statement and context. The analysis is auto-saved to history when you finalize.
-                  </p>
-                </div>
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <label htmlFor="domain" className="text-sm font-medium text-foreground">Domain</label>
-                    <Input id="domain" value={domain} onChange={e => setDomain(e.target.value)} placeholder="Manufacturing" disabled={isBusy} />
-                  </div>
-                  <div className="space-y-2">
-                    <label htmlFor="past-record" className="text-sm font-medium text-foreground">Historical Reference Year</label>
-                    <Input id="past-record" type="number" min={1900} max={CURRENT_YEAR} value={pastRecord} onChange={e => setPastRecord(e.target.value)} placeholder={String(CURRENT_YEAR)} disabled={isBusy} />
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <label htmlFor="problem" className="text-sm font-medium text-foreground">Problem Statement</label>
-                  <Textarea
-                    id="problem"
-                    value={problem}
-                    onChange={e => setProblem(e.target.value)}
-                    placeholder="Describe the failure, symptom, or recurring issue you want to investigate..."
-                    className="min-h-32 resize-y"
-                    disabled={isBusy}
-                    onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') void handleAnalyze() }}
-                  />
-                  <p className="text-xs text-muted-foreground">Press Ctrl/Cmd + Enter to submit quickly.</p>
-                </div>
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <Badge variant="secondary" className="rounded-full px-3 py-1">Step 1 of 3: Generate Ishikawa</Badge>
-                  <Button onClick={handleAnalyze} disabled={!problem.trim() || isBusy} size="lg">
-                    {busyAction === 'analyze' ? <><Loader2 className="size-4 animate-spin" />Analyzing…</> : 'Analyze Problem'}
-                  </Button>
-                </div>
-              </Card>
-
-              <Card className="gap-4 border-border px-6 py-6">
-                <div className="space-y-2">
-                  <h3 className="text-sm font-semibold uppercase tracking-[0.22em] text-muted-foreground">Quick Examples</h3>
-                  <p className="text-sm text-muted-foreground">Use one of these to test the API wiring and the downstream tabs.</p>
-                </div>
-                <div className="grid gap-3 md:grid-cols-2">
-                  {EXAMPLES.map(example => (
-                    <button
-                      key={example}
-                      onClick={() => setProblem(example)}
-                      className="rounded-xl border border-border bg-white px-4 py-3 text-left text-sm font-medium text-foreground transition hover:bg-muted/40"
-                      disabled={isBusy}
-                    >
-                      {example}
-                    </button>
-                  ))}
-                </div>
-              </Card>
-            </TabsContent>
-
-            {/* Ishikawa tab */}
-            <TabsContent value="ishikawa" className="mt-6">
-              {ishikawaData && (
-                <>
-                  <IshikawaDiagram
-                    problem={problem}
-                    data={ishikawaData}
-                    busy={isBusy}
-                    onRegenerate={handleIshikawaRegenerate}
-                    onFinalize={handleIshikawaFinalize}
-                  />
-                  <IshikawaImageRequest problem={problem} data={ishikawaData} />
-                </>
-              )}
-            </TabsContent>
-
-            {/* 5-Why tab */}
-            <TabsContent value="five-why" className="mt-6">
-              {fiveWhyData && (
-                <FiveWhyAnalysis
-                  problem={problem}
-                  data={fiveWhyData}
-                  summary={finalSummary}
-                  busy={isBusy}
-                  onRegenerate={handleFiveWhyRegenerate}
-                  onFinalize={handleFiveWhyFinalize}
-                />
-              )}
-            </TabsContent>
-
-            {/* 8D tab */}
-            <TabsContent value="eightd" className="mt-6">
-              <EightDManager />
-            </TabsContent>
-          </Tabs>
-        </div>
+          </div>
+        )}
       </div>
 
-      {/* ── Auto-save toast ── */}
-      <SaveToast state={saveToast} />
+      <style>{`
+        @keyframes fadeInDown {
+          from { opacity: 0; transform: translateY(-20px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes slideUp {
+          from { opacity: 0; transform: translateY(20px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .animation-fadeIn {
+          animation: fadeIn 0.4s ease;
+        }
+        @keyframes fadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+      `}</style>
     </div>
   )
 }
+

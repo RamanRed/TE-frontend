@@ -12,8 +12,10 @@ import {
   Loader2,
   RefreshCw,
   Search,
+  FileText,
   X,
 } from 'lucide-react'
+import { HistoryViewer } from '@/components/history-viewer'
 import { type HistorySession, historyApi, storeOrGetTriplet } from '@/lib/history-api'
 
 function formatDate(iso: string) {
@@ -35,150 +37,173 @@ function SessionCard({ session }: { session: HistorySession }) {
   const router = useRouter()
 
   const handleLoad = () => {
-    sessionStorage.setItem('te_load_session', JSON.stringify({
-      query: session.query, domain: session.domain,
-      ishikawa: session.ishikawa, fiveWhys: session.five_whys,
-    }))
-    router.push('/')
+    // Ensure we capture the full session data for the transfer
+    const transferData = {
+      query: session.query,
+      domain: session.domain,
+      ishikawa: session.ishikawa || [],
+      fiveWhys: session.five_whys || [],
+    }
+    sessionStorage.setItem('te_load_session', JSON.stringify(transferData))
+    // Use window.location.href to force a clean mount of the home page
+    window.location.href = '/'
   }
 
   return (
     <div style={{
-      background: '#fff',
-      border: '1px solid #e5e7eb',
-      borderRadius: 10,
-      overflow: 'hidden',
-      transition: 'box-shadow 0.15s',
-    }}
-      onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.boxShadow = '0 2px 12px rgba(0,0,0,0.07)' }}
-      onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.boxShadow = 'none' }}
-    >
-      {/* Card body */}
-      <div style={{ padding: '16px 20px' }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            {/* Title */}
-            <h3 style={{ margin: '0 0 6px', fontSize: 15, fontWeight: 700, color: '#111827', lineHeight: 1.3 }}>
+      padding: '16px 20px', background: expanded ? '#ffffff' : '#f8fafc',
+      borderRadius: 16, border: `1px solid ${expanded ? '#f1f5f9' : '#e2e8f0'}`,
+      boxShadow: expanded ? '0 10px 25px rgba(0,0,0,0.06)' : '0 2px 4px rgba(0,0,0,0.02)',
+      transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+      marginBottom: 16, overflow: 'hidden',
+    }}>
+      <div style={{ display: 'flex', gap: 20, padding: '4px' }}>
+        {/* Left icon box */}
+        <div style={{
+          width: 48, height: 48, borderRadius: 12,
+          background: 'linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          color: '#64748b', flexShrink: 0, border: '1px solid #e2e8f0',
+        }}>
+          <FileText size={24} />
+        </div>
+
+        {/* Content */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 6 }}>
+            <h3 style={{
+              margin: 0, fontSize: 16, fontWeight: 700, color: '#0f172a',
+              lineHeight: 1.4, overflow: 'hidden', textOverflow: 'ellipsis',
+              display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+            }}>
               {session.title || session.query}
             </h3>
-            {session.title && session.title !== session.query && (
-              <p style={{ margin: '0 0 8px', fontSize: 12, color: '#6b7280', lineHeight: 1.4 }}>{session.query}</p>
-            )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#94a3b8', fontSize: 12, whiteSpace: 'nowrap', flexShrink: 0 }}>
+              <Calendar size={12} />
+              {formatDate(session.created_at)}
+            </div>
+          </div>
 
-            {/* Pills */}
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
-              <span style={{
-                fontSize: 11, fontWeight: 700, color: '#fff',
-                background: '#f97316', borderRadius: 5, padding: '2px 8px',
-              }}>{session.domain}</span>
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+            <span style={{
+              fontSize: 10, fontWeight: 800, color: '#fff',
+              background: 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)',
+              borderRadius: 6, padding: '3px 10px', textTransform: 'uppercase', letterSpacing: '0.05em',
+            }}>
+              {session.domain}
+            </span>
+            <div style={{ width: 1, height: 10, background: '#e2e8f0' }} />
+            <span style={{ fontSize: 12, color: '#64748b', fontWeight: 500 }}>
+              {formatTime(session.created_at)}
+            </span>
+            {session.cause_count > 0 && (
               <span style={{
                 display: 'inline-flex', alignItems: 'center', gap: 4,
-                fontSize: 11, color: '#6b7280', background: '#f9fafb',
-                border: '1px solid #e5e7eb', borderRadius: 5, padding: '2px 8px',
+                fontSize: 11, color: '#059669', fontWeight: 700,
+                background: '#f0fdf4', border: '1px solid #dcfce7',
+                borderRadius: 6, padding: '2px 8px',
               }}>
-                <Calendar size={10} /> {formatDate(session.created_at)} · {formatTime(session.created_at)}
+                <Layers size={10} /> {session.cause_count} Potential Cause{session.cause_count !== 1 ? 's' : ''}
               </span>
-              {session.cause_count > 0 && (
-                <span style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 4,
-                  fontSize: 11, color: '#059669', background: '#f0fdf4',
-                  border: '1px solid #bbf7d0', borderRadius: 5, padding: '2px 8px',
-                }}>
-                  <Layers size={10} /> {session.cause_count} cause{session.cause_count !== 1 ? 's' : ''}
-                </span>
-              )}
+            )}
+          </div>
+
+          {/* Root causes preview */}
+          {session.root_causes && session.root_causes.length > 0 && (
+            <div style={{
+              display: 'flex', flexDirection: 'column', gap: 6,
+              background: '#f8fafc', padding: '12px', borderRadius: 12,
+              border: '1px solid #f1f5f9',
+            }}>
+              {session.root_causes.slice(0, 2).map((rc, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                  <GitBranch size={12} style={{ color: '#94a3b8', flexShrink: 0, marginTop: 3 }} />
+                  <span style={{ fontSize: 12, color: '#475569', lineHeight: 1.5, fontWeight: 500 }}>{rc}</span>
+                </div>
+              ))}
             </div>
+          )}
+        </div>
 
-            {/* Root causes preview */}
-            {session.root_causes?.slice(0, 2).map((rc, i) => (
-              <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginBottom: 4 }}>
-                <GitBranch size={11} style={{ color: '#d1d5db', flexShrink: 0, marginTop: 3 }} />
-                <span style={{ fontSize: 12, color: '#6b7280', lineHeight: 1.4 }}>{rc}</span>
-              </div>
-            ))}
-          </div>
-
-          {/* Actions */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0 }}>
-            <button
-              onClick={handleLoad}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 5,
-                background: '#f97316', border: 'none', borderRadius: 7,
-                padding: '7px 14px', fontSize: 12, fontWeight: 700, color: '#fff',
-                cursor: 'pointer', whiteSpace: 'nowrap', transition: 'background 0.12s',
-              }}
-              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = '#ea6c0a' }}
-              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = '#f97316' }}
-            >
-              Load <ChevronRight size={13} />
-            </button>
-            <button
-              onClick={() => setExpanded(x => !x)}
-              style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
-                background: '#f9fafb', border: '1px solid #e5e7eb',
-                borderRadius: 7, padding: '6px 12px',
-                fontSize: 11, fontWeight: 600, color: '#6b7280',
-                cursor: 'pointer', transition: 'background 0.12s',
-              }}
-              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = '#f3f4f6' }}
-              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = '#f9fafb' }}
-            >
-              {expanded ? <><ChevronDown size={11} /> Less</> : <><ChevronRight size={11} /> Preview</>}
-            </button>
-          </div>
+        {/* Actions */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0, justifyContent: 'center' }}>
+          <button
+            onClick={handleLoad}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              background: '#0f172a', border: 'none', borderRadius: 10,
+              padding: '10px 16px', fontSize: 12, fontWeight: 700, color: '#fff',
+              cursor: 'pointer', whiteSpace: 'nowrap', transition: 'all 0.2s',
+              boxShadow: '0 4px 12px rgba(15, 23, 42, 0.15)',
+            }}
+            onMouseEnter={e => {
+              (e.currentTarget as HTMLButtonElement).style.background = '#1e293b';
+              (e.currentTarget as HTMLButtonElement).style.transform = 'translateY(-1px)'
+            }}
+            onMouseLeave={e => {
+              (e.currentTarget as HTMLButtonElement).style.background = '#0f172a';
+              (e.currentTarget as HTMLButtonElement).style.transform = 'none'
+            }}
+          >
+            Restore Analysis <ChevronRight size={14} strokeWidth={2.5} />
+          </button>
+          <button
+            onClick={() => setExpanded(!expanded)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'center',
+              background: '#fff', border: '1px solid #e2e8f0', borderRadius: 10,
+              padding: '10px 16px', fontSize: 12, fontWeight: 600, color: '#475569',
+              cursor: 'pointer', transition: 'all 0.2s',
+            }}
+            onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = '#f8fafc' }}
+            onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = '#fff' }}
+          >
+            {expanded ? (
+              <><ChevronDown size={14} strokeWidth={2.5} /> Hide Details</>
+            ) : (
+              <><ChevronRight size={14} strokeWidth={2.5} /> View Full Report</>
+            )}
+          </button>
         </div>
       </div>
 
-      {/* Expanded data preview */}
+      {/* Expanded — read-only HistoryViewer */}
       {expanded && (
         <div style={{
-          borderTop: '1px solid #f3f4f6',
-          padding: '14px 20px',
-          display: 'grid',
-          gap: 16,
-          gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-          background: '#fafafa',
+          marginTop: 20, paddingTop: 32, borderTop: '2px solid #f8fafc',
+          background: '#fff', borderRadius: 12,
         }}>
-          {/* Ishikawa */}
-          <div>
-            <p style={{ margin: '0 0 8px', fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.07em' }}>
-              Ishikawa Categories
-            </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {(session.ishikawa ?? []).slice(0, 6).map(cat => (
-                <div key={cat.category} style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  background: '#fff', border: '1px solid #e5e7eb', borderRadius: 6, padding: '5px 10px',
-                }}>
-                  <span style={{ fontSize: 12, fontWeight: 600, color: '#374151' }}>{cat.category}</span>
-                  <span style={{ fontSize: 11, color: '#9ca3af' }}>{cat.result?.length ?? 0}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* 5-Why */}
-          <div>
-            <p style={{ margin: '0 0 8px', fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.07em' }}>
-              5-Why Root Causes
-            </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {(session.five_whys ?? []).length === 0 ? (
-                <span style={{ fontSize: 11, color: '#9ca3af' }}>No 5-Why data</span>
-              ) : (session.five_whys ?? []).slice(0, 4).map((item, i) => (
-                <div key={i} style={{
-                  background: '#fff', border: '1px solid #e5e7eb', borderRadius: 6, padding: '5px 10px',
-                }}>
-                  <span style={{
-                    fontSize: 11, color: '#374151', lineHeight: 1.35,
-                    display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
-                  }}>
-                    {item.root_cause || item.problem_id}
-                  </span>
-                </div>
-              ))}
+          <div style={{ maxWidth: 840, margin: '0 auto' }}>
+            <HistoryViewer
+              problem={session.query}
+              domain={session.domain}
+              createdAt={session.created_at}
+              ishikawa={session.ishikawa ?? []}
+              fiveWhys={session.five_whys ?? []}
+            />
+            {/* Quick Restore Button at the bottom of the report */}
+            <div style={{ marginTop: 40, paddingTop: 32, borderTop: '1px solid #f1f5f9', display: 'flex', justifyContent: 'center' }}>
+              <button
+                onClick={handleLoad}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 10,
+                  background: 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)',
+                  border: 'none', borderRadius: 12, padding: '14px 28px',
+                  fontSize: 14, fontWeight: 700, color: '#fff',
+                  cursor: 'pointer', transition: 'all 0.2s',
+                  boxShadow: '0 8px 20px rgba(234, 88, 12, 0.2)',
+                }}
+                onMouseEnter={e => {
+                  (e.currentTarget as HTMLButtonElement).style.transform = 'translateY(-2px)';
+                  (e.currentTarget as HTMLButtonElement).style.boxShadow = '0 12px 24px rgba(234, 88, 12, 0.3)';
+                }}
+                onMouseLeave={e => {
+                  (e.currentTarget as HTMLButtonElement).style.transform = 'none';
+                  (e.currentTarget as HTMLButtonElement).style.boxShadow = '0 8px 20px rgba(234, 88, 12, 0.2)';
+                }}
+              >
+                Restore this Analysis to Editor <ChevronRight size={18} strokeWidth={2.5} />
+              </button>
             </div>
           </div>
         </div>
@@ -217,126 +242,118 @@ export default function HistoryPage() {
   )
 
   return (
-    <div style={{
-      minHeight: '100vh',
-      background: '#f9fafb',
-      padding: '0',
-    }}>
-      {/* Top nav bar */}
+    <div style={{ minHeight: '100vh', background: '#f8fafc', fontFamily: 'Inter, system-ui, sans-serif' }}>
+      {/* Header section */}
       <div style={{
-        background: '#fff',
-        borderBottom: '1px solid #e5e7eb',
-        padding: '0 24px',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 16,
-        height: 56,
-        position: 'sticky',
-        top: 0,
-        zIndex: 10,
+        background: '#ffffff', borderBottom: '1px solid #f1f5f9',
+        padding: '32px 24px', position: 'sticky', top: 0, zIndex: 10,
+        boxShadow: '0 4px 12px rgba(0,0,0,0.02)',
       }}>
-        <button
-          onClick={() => router.push('/')}
-          style={{
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-            background: 'none', border: 'none', cursor: 'pointer',
-            fontSize: 13, fontWeight: 600, color: '#374151', padding: '6px 8px',
-            borderRadius: 6, transition: 'background 0.12s',
-          }}
-          onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = '#f3f4f6' }}
-          onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'none' }}
-        >
-          <ArrowLeft size={15} /> Back
-        </button>
-        <div style={{ width: 1, height: 20, background: '#e5e7eb' }} />
-        <span style={{ fontSize: 14, fontWeight: 700, color: '#111827' }}>Analysis History</span>
-        {sessions.length > 0 && (
-          <span style={{
-            fontSize: 11, fontWeight: 600, color: '#f97316',
-            background: '#fff7ed', border: '1px solid #fed7aa',
-            borderRadius: 999, padding: '2px 8px',
-          }}>
-            {sessions.length}
-          </span>
-        )}
-      </div>
+        <div style={{ maxWidth: 1000, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 24 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+            <button
+              onClick={() => router.push('/')}
+              style={{
+                background: '#f1f5f9', border: 'none', borderRadius: 12,
+                width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                cursor: 'pointer', color: '#475569', transition: 'all 0.2s',
+              }}
+              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = '#e2e8f0'; (e.currentTarget as HTMLButtonElement).style.color = '#0f172a' }}
+              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = '#f1f5f9'; (e.currentTarget as HTMLButtonElement).style.color = '#475569' }}
+            >
+              <ArrowLeft size={20} strokeWidth={2.5} />
+            </button>
+            <div>
+              <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: '#0f172a', letterSpacing: '-0.03em' }}>
+                Analysis Repository
+              </h1>
+              <p style={{ margin: 0, fontSize: 14, color: '#64748b', fontWeight: 500 }}>
+                Access and restore your past Ishikawa and 5-Why sessions
+              </p>
+            </div>
+          </div>
 
-      <div style={{ maxWidth: 900, margin: '0 auto', padding: '28px 20px' }}>
-        {/* Toolbar */}
-        <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
-          <div style={{ position: 'relative', flex: 1, minWidth: 200 }}>
-            <Search size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af', pointerEvents: 'none' }} />
+          <div style={{ position: 'relative', width: '100%', maxWidth: 360 }}>
+            <Search size={16} style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
             <input
               type="text"
-              placeholder="Search by title, query, or domain…"
+              placeholder="Search repository..."
               value={search}
               onChange={e => setSearch(e.target.value)}
               style={{
-                width: '100%', border: '1px solid #d1d5db', borderRadius: 8,
-                padding: '9px 32px 9px 34px', fontSize: 13, color: '#374151',
-                background: '#fff', outline: 'none', boxSizing: 'border-box', transition: 'border-color 0.12s',
+                width: '100%', border: '1px solid #e2e8f0', borderRadius: 14,
+                padding: '12px 16px 12px 42px', fontSize: 14, color: '#1e293b',
+                background: '#f8fafc', outline: 'none', transition: 'all 0.2s',
               }}
-              onFocus={e => { (e.currentTarget as HTMLInputElement).style.borderColor = '#f97316' }}
-              onBlur={e => { (e.currentTarget as HTMLInputElement).style.borderColor = '#d1d5db' }}
+              onFocus={e => {
+                (e.currentTarget as HTMLInputElement).style.borderColor = '#f97316';
+                (e.currentTarget as HTMLInputElement).style.background = '#fff';
+                (e.currentTarget as HTMLInputElement).style.boxShadow = '0 0 0 4px rgba(249, 115, 22, 0.1)'
+              }}
+              onBlur={e => {
+                (e.currentTarget as HTMLInputElement).style.borderColor = '#e2e8f0';
+                (e.currentTarget as HTMLInputElement).style.background = '#f8fafc';
+                (e.currentTarget as HTMLInputElement).style.boxShadow = 'none'
+              }}
             />
             {search && (
-              <button onClick={() => setSearch('')} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', display: 'flex' }}>
-                <X size={13} />
+              <button onClick={() => setSearch('')} style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', display: 'flex', padding: 4 }}>
+                <X size={14} strokeWidth={2.5} />
               </button>
             )}
           </div>
-          <button
-            onClick={fetchHistory}
-            disabled={loading}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 6,
-              background: '#fff', border: '1px solid #d1d5db', borderRadius: 8,
-              padding: '9px 14px', fontSize: 13, fontWeight: 600, color: '#374151',
-              cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.6 : 1,
-              transition: 'background 0.12s',
-            }}
-            onMouseEnter={e => { if (!loading) (e.currentTarget as HTMLButtonElement).style.background = '#f9fafb' }}
-            onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = '#fff' }}
-          >
-            {loading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-            Refresh
-          </button>
         </div>
+      </div>
 
-        {/* Summary line */}
-        {!loading && !error && sessions.length > 0 && (
-          <p style={{ fontSize: 12, color: '#9ca3af', marginBottom: 16 }}>
-            {filtered.length === sessions.length
-              ? `${sessions.length} session${sessions.length !== 1 ? 's' : ''}`
-              : `Showing ${filtered.length} of ${sessions.length} sessions`}
-          </p>
-        )}
-
-        {/* Content */}
-        {loading ? (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '60px 20px', gap: 12, color: '#9ca3af' }}>
-            <Loader2 size={28} className="animate-spin" />
-            <span style={{ fontSize: 13 }}>Loading history…</span>
-          </div>
-        ) : error ? (
+      <main style={{ maxWidth: 1000, margin: '0 auto', padding: '40px 24px 80px' }}>
+        {error ? (
           <div style={{
-            padding: 16, background: '#fef2f2', border: '1px solid #fecaca',
-            borderRadius: 8, color: '#dc2626', fontSize: 13,
+            background: '#fff', border: '1px solid #fee2e2', borderRadius: 20,
+            padding: '40px', textAlign: 'center', boxShadow: '0 4px 20px rgba(0,0,0,0.05)',
           }}>
-            <strong>Error:</strong> {error}
+            <h2 style={{ margin: '0 0 8px', fontSize: 18, color: '#0f172a' }}>Failed to Load Repository</h2>
+            <p style={{ margin: '0 0 24px', fontSize: 14, color: '#64748b' }}>{error}</p>
+            <button
+              onClick={fetchHistory}
+              style={{ background: '#0f172a', color: '#fff', border: 'none', borderRadius: 12, padding: '12px 24px', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}
+            >
+              Try Again
+            </button>
+          </div>
+        ) : loading && sessions.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '80px 0' }}>
+            <Loader2 size={40} className="animate-spin" color="#f97316" style={{ margin: '0 auto 16px' }} />
+            <p style={{ fontSize: 16, color: '#64748b', fontWeight: 500 }}>Fetching your analysis history...</p>
           </div>
         ) : filtered.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '60px 20px', color: '#9ca3af', fontSize: 13, lineHeight: 1.6 }}>
-            {search ? `No sessions match "${search}"` : 'No saved analyses yet. Complete and finalize an analysis to see history here.'}
+          <div style={{
+            background: '#fff', border: '1px solid #f1f5f9', borderRadius: 24,
+            padding: '80px 40px', textAlign: 'center', boxShadow: '0 4px 12px rgba(0,0,0,0.02)',
+          }}>
+            <h2 style={{ margin: '0 0 8px', fontSize: 20, fontWeight: 700, color: '#0f172a' }}>
+              {search ? 'No Matching Analyses Found' : 'Repository is Empty'}
+            </h2>
+            <p style={{ margin: '0 0 32px', fontSize: 15, color: '#64748b', maxWidth: 400,  lineHeight: 1.6 }}>
+              {search ? `We couldn't find any sessions matching "${search}".` : 'You haven\'t finalized any root cause analyses yet.'}
+            </p>
           </div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24, padding: '0 4px' }}>
+               <span style={{ fontSize: 13, fontWeight: 700, color: '#0f172a' }}>{filtered.length} Session{filtered.length !== 1 ? 's' : ''}</span>
+               <button
+                  onClick={fetchHistory}
+                  style={{ background: 'none', border: 'none', color: '#f97316', fontSize: 13, fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
+               >
+                 <RefreshCw size={14} /> Refresh List
+               </button>
+            </div>
             {filtered.map(session => (
               <SessionCard key={session.session_id} session={session} />
             ))}
           </div>
         )}
-      </div>
+      </main>
     </div>
   )
 }

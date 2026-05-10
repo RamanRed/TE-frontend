@@ -172,17 +172,11 @@ export function IshikawaDiagram({
   }
 
   const handleFinalize = async () => {
-    // Full data (all items) — used for export and locking the UI
+    // Always send the complete dataset to the parent.
+    // The parent decides what subset to use for 5-Why generation vs. saving to history.
     const fullData = serializeCells(false)
     setLocked(true)
-
-    // For 5 Why's: only send causes marked for immediate action (High / Critical severity)
-    const filteredData = fullData.map((category) => ({
-      ...category,
-      result: category.result.filter((item) => item.immediate_action),
-    }))
-
-    await onFinalize?.(filteredData)
+    await onFinalize?.(fullData)
   }
 
   const handleExport = () => {
