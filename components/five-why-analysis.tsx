@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { type FiveWhyChainItem, normalizeFiveWhyAnalysis } from '@/lib/root-cause'
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000'
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_IMAGE_URL ?? 'http://localhost:4000'
 
 function clampConfidence(value: string) {
   const parsed = Number(value)

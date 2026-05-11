@@ -428,7 +428,7 @@ export default function Home() {
                               disabled={isBusy}
                             />
                           </div>
-                          <div>
+                          {/* <div>
                             <label className="block text-sm font-bold text-slate-800 mb-3 flex items-center gap-2">
                               REFERENCE YEAR
                             </label>
@@ -439,7 +439,7 @@ export default function Home() {
                               className="h-12 border-slate-200 focus:border-orange-500 focus:ring-orange-200 rounded-xl"
                               disabled={isBusy}
                             />
-                          </div>
+                          </div> */}
                         </div>
 
                         {errorMessage && (
